@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
@@ -103,22 +105,60 @@ func handleGmailCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store token (in a real app, you would persist this securely)
-	// For now, just send it to the frontend
-	w.Header().Set("Content-Type", "application/json")
-	tokenJSON, _ := json.Marshal(token)
+	// Convert token to a map for easier JSON handling
+	tokenMap := map[string]interface{}{
+		"access_token":  token.AccessToken,
+		"token_type":    token.TokenType,
+		"refresh_token": token.RefreshToken,
+		"expiry":        token.Expiry.Format(time.RFC3339),
+	}
 
-	// In a production app, you would set a secure HTTP-only cookie or use a session
-	// and NOT return the token directly to the frontend
-	// This is just for demonstration purposes
-	script := fmt.Sprintf(`
-		<script>
-			window.opener.postMessage({"token": %s}, "*");
-			window.close();
-		</script>
-	`, string(tokenJSON))
+	// Convert to JSON
+	tokenJSON, err := json.Marshal(tokenMap)
+	if err != nil {
+		http.Error(w, "Failed to marshal token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	w.Write([]byte(script))
+	// Create a base64 encoded version of the token JSON to avoid any escaping issues
+	tokenBase64 := base64.StdEncoding.EncodeToString(tokenJSON)
+
+	// Set content type and write the HTML response
+	w.Header().Set("Content-Type", "text/html")
+	html := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Authentication Successful</title>
+</head>
+<body>
+    <h3>Authentication Successful</h3>
+    <p>You can close this window now.</p>
+    <script>
+        try {
+            // Decode the base64 encoded token
+            const tokenBase64 = "%s";
+            const tokenJSON = atob(tokenBase64);
+            const token = JSON.parse(tokenJSON);
+            
+            if (window.opener) {
+                window.opener.postMessage({token: token}, "*");
+                console.log("Token sent to main window");
+                setTimeout(function() {
+                    window.close();
+                }, 1000);
+            } else {
+                document.body.innerHTML += "<p>Error: Could not communicate with the main application window.</p>";
+            }
+        } catch (e) {
+            document.body.innerHTML += "<p>Error during authentication: " + e.message + "</p>";
+            console.error("Auth error:", e);
+        }
+    </script>
+</body>
+</html>`, tokenBase64)
+
+	w.Write([]byte(html))
 }
 
 // handleGetEmails retrieves emails using the Gmail API
