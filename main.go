@@ -31,6 +31,12 @@ func main() {
 	router.HandleFunc("/api/emails", api.HandleGetEmails).Methods("GET")
 	router.HandleFunc("/api/emails/{id}", api.HandleDeleteEmail).Methods("DELETE")
 
+	// Inbox processing routes
+	router.HandleFunc("/api/inbox/process", api.HandleStartProcessingInbox).Methods("POST")
+	router.HandleFunc("/api/inbox/status", api.HandleGetInboxStatus).Methods("GET")
+	router.HandleFunc("/api/inbox/top-senders", api.HandleGetTopSenders).Methods("GET")
+	router.HandleFunc("/api/inbox/stats", api.HandleGetEmailStats).Methods("GET")
+
 	// Serve Svelte frontend from dist directory
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./frontend/dist")))
 
