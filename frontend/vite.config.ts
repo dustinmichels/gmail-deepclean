@@ -1,13 +1,12 @@
-// vite.config.ts
+/// <reference types="vitest" />
 import vue from '@vitejs/plugin-vue'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [vue()],
   server: {
     proxy: {
-      // Proxy API requests to our Go backend during development
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
@@ -19,12 +18,15 @@ export default defineConfig({
     },
   },
   build: {
-    // Output to the dist directory, which our Go server will serve
     outDir: 'dist',
   },
   resolve: {
     alias: {
       '@': '/src',
     },
+  },
+  test: {
+    environment: 'happy-dom',
+    globals: true,
   },
 })

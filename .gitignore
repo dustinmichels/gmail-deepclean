@@ -1,3 +1,5 @@
 client_secret_*
 
 .env
+data/
+*.db

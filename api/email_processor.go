@@ -4,200 +4,383 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand/v2"
+	"net/mail"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/gmail/v1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
-// EmailMetadata stores information about emails
+// EmailMetadata stores parsed information about an email message
 type EmailMetadata struct {
 	ID           string    `json:"id"`
 	ThreadID     string    `json:"threadId"`
 	From         string    `json:"from"`
+	FromName     string    `json:"fromName"`
 	To           []string  `json:"to"`
 	Subject      string    `json:"subject"`
 	Date         time.Time `json:"date"`
 	Snippet      string    `json:"snippet"`
 	LabelIDs     []string  `json:"labelIds"`
 	SizeEstimate int64     `json:"sizeEstimate"`
+	IsSent       bool      `json:"isSent"`
 }
 
-// EmailStats tracks statistics about email communications
-type EmailStats struct {
-	// Maps sender email to number of emails received
-	FromCount map[string]int `json:"fromCount"`
-	// Maps recipient email to number of emails sent
-	ToCount map[string]int `json:"toCount"`
-	// Maps sender to total size of emails received
-	FromSize map[string]int64 `json:"fromSize"`
-	// Maps date to number of emails
-	DateCount map[string]int `json:"dateCount"`
-	// Total emails processed
-	TotalEmails int `json:"totalEmails"`
-	// Lock for concurrent map access
-	mu sync.RWMutex
+// ProgressInfo represents the current scanning progress
+type ProgressInfo struct {
+	UserID        string     `json:"userId"`
+	UserEmail     string     `json:"userEmail"`
+	IsProcessing  bool       `json:"isProcessing"`
+	TotalEmails   int        `json:"totalEmails"`
+	StatusMessage string     `json:"statusMessage"`
+	LastScannedAt *time.Time `json:"lastScannedAt,omitempty"`
 }
 
-// NewEmailStats creates a new EmailStats instance
-func NewEmailStats() *EmailStats {
-	return &EmailStats{
-		FromCount: make(map[string]int),
-		ToCount:   make(map[string]int),
-		FromSize:  make(map[string]int64),
-		DateCount: make(map[string]int),
-	}
-}
-
-// InboxProcessor manages the process of downloading and analyzing inbox data
+// InboxProcessor coordinates quota-safe background downloading and processing of Gmail messages
 type InboxProcessor struct {
-	token        *oauth2.Token
-	service      *gmail.Service
-	emails       []EmailMetadata
-	stats        *EmailStats
-	pageToken    string
-	isProcessing bool
-	mu           sync.RWMutex
+	userID        string
+	userEmail     string
+	oauthToken    *oauth2.Token
+	service       *gmail.Service
+	scanState     *ScanState
+	cancelFunc    context.CancelFunc
+	mu            sync.RWMutex
+	concurrency   int
+	rateLimiter   *time.Ticker
 }
 
-// NewInboxProcessor creates a new InboxProcessor
-func NewInboxProcessor(token *oauth2.Token) (*InboxProcessor, error) {
-	client := oauthConfig.Client(context.Background(), token)
-	service, err := gmail.NewService(context.Background(), option.WithHTTPClient(client))
+// Global registry of active processors per user
+type ProcessorRegistry struct {
+	processors map[string]*InboxProcessor
+	mu         sync.RWMutex
+}
+
+var Registry = &ProcessorRegistry{
+	processors: make(map[string]*InboxProcessor),
+}
+
+func (r *ProcessorRegistry) GetOrCreate(userID, userEmail string, token *oauth2.Token) (*InboxProcessor, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if proc, exists := r.processors[userID]; exists {
+		proc.mu.Lock()
+		proc.oauthToken = token
+		proc.mu.Unlock()
+		return proc, nil
+	}
+
+	proc, err := NewInboxProcessor(userID, userEmail, token)
+	if err != nil {
+		return nil, err
+	}
+	r.processors[userID] = proc
+	return proc, nil
+}
+
+func (r *ProcessorRegistry) Get(userID string) (*InboxProcessor, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	proc, exists := r.processors[userID]
+	return proc, exists
+}
+
+// NewInboxProcessor initializes a processor with DB-backed state and rate limiting
+func NewInboxProcessor(userID, userEmail string, token *oauth2.Token) (*InboxProcessor, error) {
+	ctx := context.Background()
+	client := oauthConfig.Client(ctx, token)
+	service, err := gmail.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gmail service: %w", err)
 	}
 
+	state, err := DB.GetScanState(userID)
+	if err != nil {
+		state = &ScanState{
+			UserID:        userID,
+			IsProcessing:  false,
+			TotalEmails:   0,
+			StatusMessage: "Ready to scan",
+			UpdatedAt:     time.Now(),
+		}
+	}
+	// On server restart, ensure isProcessing is false until started
+	state.IsProcessing = false
+
 	return &InboxProcessor{
-		token:        token,
-		service:      service,
-		emails:       make([]EmailMetadata, 0),
-		stats:        NewEmailStats(),
-		isProcessing: false,
+		userID:      userID,
+		userEmail:   strings.ToLower(strings.TrimSpace(userEmail)),
+		oauthToken:  token,
+		service:     service,
+		scanState:   state,
+		concurrency: 5,                                 // Bounded worker pool: 5 concurrent workers
+		rateLimiter: time.NewTicker(60 * time.Millisecond), // Max ~16 requests/sec (well under 250 units/sec limit)
 	}, nil
 }
 
-// StartProcessing begins downloading and processing emails in the background
-func (p *InboxProcessor) StartProcessing() error {
+// StartProcessing initiates background scanning with worker pool and rate limits
+func (p *InboxProcessor) StartProcessing(reset bool) error {
 	p.mu.Lock()
-	if p.isProcessing {
+	if p.scanState.IsProcessing {
 		p.mu.Unlock()
-		return fmt.Errorf("processing already in progress")
+		return fmt.Errorf("scan already in progress")
 	}
-	p.isProcessing = true
+
+	if reset {
+		p.scanState.NextPageToken = ""
+		p.scanState.TotalEmails = 0
+		p.scanState.StatusMessage = "Starting new scan..."
+	} else {
+		p.scanState.StatusMessage = "Resuming scan..."
+	}
+
+	p.scanState.IsProcessing = true
+	now := time.Now()
+	p.scanState.LastScannedAt = &now
+	_ = DB.SaveScanState(p.scanState)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancelFunc = cancel
 	p.mu.Unlock()
 
-	go p.processInbox()
+	go p.runScan(ctx)
 	return nil
 }
 
-// GetStats returns current email statistics
-func (p *InboxProcessor) GetStats() *EmailStats {
-	return p.stats
+// PauseProcessing stops the background scan gracefully
+func (p *InboxProcessor) PauseProcessing() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.scanState.IsProcessing {
+		return nil
+	}
+
+	if p.cancelFunc != nil {
+		p.cancelFunc()
+		p.cancelFunc = nil
+	}
+
+	p.scanState.IsProcessing = false
+	p.scanState.StatusMessage = "Scan paused"
+	now := time.Now()
+	p.scanState.LastScannedAt = &now
+	return DB.SaveScanState(p.scanState)
 }
 
-// GetProgress returns the current progress
-func (p *InboxProcessor) GetProgress() map[string]interface{} {
+// GetProgress returns the current status and metrics
+func (p *InboxProcessor) GetProgress() ProgressInfo {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return map[string]interface{}{
-		"totalEmails":  p.stats.TotalEmails,
-		"isProcessing": p.isProcessing,
+	return ProgressInfo{
+		UserID:        p.userID,
+		UserEmail:     p.userEmail,
+		IsProcessing:  p.scanState.IsProcessing,
+		TotalEmails:   p.scanState.TotalEmails,
+		StatusMessage: p.scanState.StatusMessage,
+		LastScannedAt: p.scanState.LastScannedAt,
 	}
 }
 
-// extractEmailAddress extracts the email address from the value field of a header
-func extractEmailAddress(header string) string {
-	// This is a simple extraction - you might want to use a regex for more accurate parsing
-	// Example: "John Doe <john@example.com>" -> "john@example.com"
+// runScan executes the paginated scanning loop using a bounded worker pool
+func (p *InboxProcessor) runScan(ctx context.Context) {
+	defer func() {
+		p.mu.Lock()
+		p.scanState.IsProcessing = false
+		p.cancelFunc = nil
+		now := time.Now()
+		p.scanState.LastScannedAt = &now
+		_ = DB.SaveScanState(p.scanState)
+		p.mu.Unlock()
+	}()
 
-	start := 0
-	end := len(header)
+	user := "me"
+	pageSize := int64(100)
 
-	// Find the start of the email (after '<' if present)
-	for i := 0; i < len(header); i++ {
-		if header[i] == '<' {
-			start = i + 1
-			break
-		}
-	}
-
-	// Find the end of the email (before '>' if present)
-	for i := len(header) - 1; i >= 0; i-- {
-		if header[i] == '>' {
-			end = i
-			break
-		}
-	}
-
-	if start < end {
-		return header[start:end]
-	}
-
-	return header
-}
-
-// processInbox handles downloading all emails from the inbox
-func (p *InboxProcessor) processInbox() {
-	user := "me" // special value for the authenticated user
-	pageToken := ""
-	pageSize := int64(100) // Number of messages to fetch per API call
+	log.Printf("[%s] Starting inbox scan for %s", p.userID, p.userEmail)
 
 	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[%s] Scan cancelled by context", p.userID)
+			p.updateStatus("Scan paused")
+			return
+		default:
+		}
+
+		p.mu.RLock()
+		pageToken := p.scanState.NextPageToken
+		p.mu.RUnlock()
+
 		req := p.service.Users.Messages.List(user).MaxResults(pageSize)
 		if pageToken != "" {
 			req = req.PageToken(pageToken)
 		}
 
-		resp, err := req.Do()
+		// Fetch page with retry and backoff
+		var resp *gmail.ListMessagesResponse
+		var err error
+		for attempt := range 4 {
+			<-p.rateLimiter.C
+			resp, err = req.Context(ctx).Do()
+			if err == nil {
+				break
+			}
+
+			if isQuotaOrRateLimitErr(err) {
+				backoff := time.Duration(1<<attempt)*time.Second + time.Duration(rand.IntN(500))*time.Millisecond
+				log.Printf("[%s] Rate limited fetching message list (attempt %d). Backing off %v", p.userID, attempt+1, backoff)
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			log.Printf("[%s] Error fetching message list: %v", p.userID, err)
+			break
+		}
+
 		if err != nil {
-			log.Printf("Failed to fetch messages: %v", err)
-			break
+			p.updateStatus(fmt.Sprintf("Error fetching messages: %v", err))
+			return
 		}
 
-		// Process each message
-		var wg sync.WaitGroup
-		for _, msg := range resp.Messages {
-			wg.Add(1)
-			go func(messageID string) {
-				defer wg.Done()
-				p.processMessage(user, messageID)
-			}(msg.Id)
+		if resp == nil || len(resp.Messages) == 0 {
+			p.updateStatus("Scan complete. No more messages.")
+			p.mu.Lock()
+			p.scanState.NextPageToken = ""
+			p.mu.Unlock()
+			return
 		}
-		wg.Wait()
 
-		// Update total count
-		p.stats.mu.Lock()
-		p.stats.TotalEmails += len(resp.Messages)
-		p.stats.mu.Unlock()
+		// Process messages with bounded worker pool
+		results := p.processMessageBatch(ctx, resp.Messages)
 
-		// Check if there are more pages
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Persist batch into SQLite
+		if len(results) > 0 {
+			if err := DB.SaveEmailsBatch(p.userID, results); err != nil {
+				log.Printf("[%s] Error saving emails batch: %v", p.userID, err)
+			}
+		}
+
+		p.mu.Lock()
+		p.scanState.TotalEmails += len(results)
+		p.scanState.NextPageToken = resp.NextPageToken
+		p.scanState.StatusMessage = fmt.Sprintf("Scanned %d emails...", p.scanState.TotalEmails)
+		_ = DB.SaveScanState(p.scanState)
+		p.mu.Unlock()
+
+		log.Printf("[%s] Batch of %d messages processed. Total: %d", p.userID, len(results), p.scanState.TotalEmails)
+
 		if resp.NextPageToken == "" {
+			p.updateStatus(fmt.Sprintf("Scan completed! Processed %d emails.", p.scanState.TotalEmails))
 			break
 		}
-		pageToken = resp.NextPageToken
 	}
-
-	p.mu.Lock()
-	p.isProcessing = false
-	p.mu.Unlock()
-
-	log.Printf("Email processing complete. Total emails processed: %d", p.stats.TotalEmails)
 }
 
-// processMessage fetches and processes a single email message
-func (p *InboxProcessor) processMessage(user, messageID string) {
-	// Get the full message details
-	msg, err := p.service.Users.Messages.Get(user, messageID).Format("full").Do()
-	if err != nil {
-		log.Printf("Failed to fetch message %s: %v", messageID, err)
-		return
+// processMessageBatch coordinates worker goroutines to fetch message details safely
+func (p *InboxProcessor) processMessageBatch(ctx context.Context, messages []*gmail.Message) []EmailMetadata {
+	total := len(messages)
+	jobs := make(chan *gmail.Message, total)
+	resultsChan := make(chan EmailMetadata, total)
+
+	for _, msg := range messages {
+		jobs <- msg
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	workers := p.concurrency
+	if workers <= 0 {
+		workers = 5
 	}
 
-	// Initialize metadata
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg, ok := <-jobs:
+					if !ok {
+						return
+					}
+					meta, err := p.fetchMessageDetails(ctx, msg.Id)
+					if err != nil {
+						// Log and skip on failure
+						continue
+					}
+					if meta != nil {
+						resultsChan <- *meta
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(resultsChan)
+
+	var results []EmailMetadata
+	for res := range resultsChan {
+		results = append(results, res)
+	}
+
+	return results
+}
+
+// fetchMessageDetails fetches a single message with exponential backoff on 429
+func (p *InboxProcessor) fetchMessageDetails(ctx context.Context, messageID string) (*EmailMetadata, error) {
+	user := "me"
+	var msg *gmail.Message
+	var err error
+
+	for attempt := range 4 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-p.rateLimiter.C:
+		}
+
+		msg, err = p.service.Users.Messages.Get(user, messageID).Format("full").Context(ctx).Do()
+		if err == nil {
+			break
+		}
+
+		if isQuotaOrRateLimitErr(err) {
+			backoff := time.Duration(1<<attempt)*time.Second + time.Duration(rand.IntN(400))*time.Millisecond
+			select {
+			case <-time.After(backoff):
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		return nil, err
+	}
+
+	if msg == nil {
+		return nil, fmt.Errorf("message %s not found", messageID)
+	}
+
 	metadata := EmailMetadata{
 		ID:           msg.Id,
 		ThreadID:     msg.ThreadId,
@@ -207,146 +390,162 @@ func (p *InboxProcessor) processMessage(user, messageID string) {
 		To:           make([]string, 0),
 	}
 
-	// Extract headers
-	for _, header := range msg.Payload.Headers {
-		switch header.Name {
-		case "From":
-			metadata.From = extractEmailAddress(header.Value)
-		case "To":
-			// Note: To might contain multiple addresses, this is a simplified version
-			metadata.To = append(metadata.To, extractEmailAddress(header.Value))
-		case "Subject":
-			metadata.Subject = header.Value
-		case "Date":
-			// Parse the date, with error handling
-			t, err := time.Parse(time.RFC1123Z, header.Value)
-			if err == nil {
-				metadata.Date = t
-			} else {
-				// Try alternative formats if the standard format fails
-				formats := []string{
-					time.RFC1123Z,
-					time.RFC1123,
-					"Mon, 2 Jan 2006 15:04:05 -0700",
-					"Mon, 2 Jan 2006 15:04:05 -0700 (MST)",
-				}
-
-				for _, format := range formats {
-					if t, err := time.Parse(format, header.Value); err == nil {
-						metadata.Date = t
-						break
-					}
-				}
+	// Parse Headers
+	if msg.Payload != nil {
+		for _, header := range msg.Payload.Headers {
+			switch strings.ToLower(header.Name) {
+			case "from":
+				addr, name := parseSingleEmail(header.Value)
+				metadata.From = addr
+				metadata.FromName = name
+			case "to":
+				recipients := parseMultiEmail(header.Value)
+				metadata.To = append(metadata.To, recipients...)
+			case "cc":
+				ccRecipients := parseMultiEmail(header.Value)
+				metadata.To = append(metadata.To, ccRecipients...)
+			case "subject":
+				metadata.Subject = header.Value
+			case "date":
+				metadata.Date = parseEmailDate(header.Value)
 			}
 		}
 	}
 
-	// Add to emails list
-	p.mu.Lock()
-	p.emails = append(p.emails, metadata)
-	p.mu.Unlock()
-
-	// Update statistics
-	p.stats.mu.Lock()
-
-	// Update from counts
-	p.stats.FromCount[metadata.From]++
-
-	// Update from size
-	p.stats.FromSize[metadata.From] += int64(metadata.SizeEstimate)
-
-	// Update to counts for each recipient
-	for _, to := range metadata.To {
-		p.stats.ToCount[to]++
+	// Fallback to internal date if Date header is missing or unparseable
+	if metadata.Date.IsZero() && msg.InternalDate > 0 {
+		metadata.Date = time.UnixMilli(msg.InternalDate)
 	}
 
-	// Update date counts
-	if !metadata.Date.IsZero() {
-		dateStr := metadata.Date.Format("2006-01-02")
-		p.stats.DateCount[dateStr]++
+	// Check if this is a draft; unsent drafts must never count as sent emails or contacts
+	for _, label := range metadata.LabelIDs {
+		if strings.EqualFold(label, "DRAFT") {
+			return nil, nil
+		}
 	}
 
-	p.stats.mu.Unlock()
+	// Determine if sent by user
+	isSent := false
+	if strings.EqualFold(metadata.From, p.userEmail) {
+		isSent = true
+	} else {
+		for _, label := range metadata.LabelIDs {
+			if strings.EqualFold(label, "SENT") {
+				isSent = true
+				break
+			}
+		}
+	}
+	metadata.IsSent = isSent
+
+	return &metadata, nil
 }
 
-// GetTopSenders returns the top N senders by email count
-func (p *InboxProcessor) GetTopSenders(n int) []map[string]interface{} {
-	p.stats.mu.RLock()
-	defer p.stats.mu.RUnlock()
+func (p *InboxProcessor) updateStatus(msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scanState.StatusMessage = msg
+	now := time.Now()
+	p.scanState.LastScannedAt = &now
+	_ = DB.SaveScanState(p.scanState)
+}
 
-	// Convert map to slice for sorting
-	type emailCount struct {
-		Email string
-		Count int
-		Size  int64
+// Helper: parse single email into clean address and display name
+func parseSingleEmail(header string) (string, string) {
+	trimmed := strings.TrimSpace(header)
+	if trimmed == "" {
+		return "", ""
 	}
 
-	senders := make([]emailCount, 0, len(p.stats.FromCount))
-	for email, count := range p.stats.FromCount {
-		size := p.stats.FromSize[email]
-		senders = append(senders, emailCount{Email: email, Count: count, Size: size})
+	addr, err := mail.ParseAddress(trimmed)
+	if err == nil && addr != nil {
+		return strings.ToLower(strings.TrimSpace(addr.Address)), strings.TrimSpace(addr.Name)
 	}
 
-	// Sort by count (descending)
-	// Note: A more efficient implementation would use a heap for top-N
-	for i := 0; i < len(senders); i++ {
-		for j := i + 1; j < len(senders); j++ {
-			if senders[i].Count < senders[j].Count {
-				senders[i], senders[j] = senders[j], senders[i]
+	// Fallback regex-free extractor
+	start := strings.Index(trimmed, "<")
+	end := strings.Index(trimmed, ">")
+	if start != -1 && end != -1 && start < end {
+		cleanAddr := strings.ToLower(strings.TrimSpace(trimmed[start+1 : end]))
+		name := strings.TrimSpace(trimmed[:start])
+		name = strings.Trim(name, "\"'")
+		return cleanAddr, name
+	}
+
+	return strings.ToLower(trimmed), ""
+}
+
+// Helper: parse multi-recipient header
+func parseMultiEmail(header string) []string {
+	trimmed := strings.TrimSpace(header)
+	if trimmed == "" {
+		return nil
+	}
+
+	addresses, err := mail.ParseAddressList(trimmed)
+	if err == nil && len(addresses) > 0 {
+		result := make([]string, 0, len(addresses))
+		for _, a := range addresses {
+			clean := strings.ToLower(strings.TrimSpace(a.Address))
+			if clean != "" {
+				result = append(result, clean)
 			}
 		}
+		return result
 	}
 
-	// Take top N
-	if n > len(senders) {
-		n = len(senders)
-	}
-	senders = senders[:n]
-
-	// Convert to map for JSON response
-	result := make([]map[string]interface{}, n)
-	for i, sender := range senders {
-		result[i] = map[string]interface{}{
-			"email": sender.Email,
-			"count": sender.Count,
-			"size":  sender.Size,
+	// Fallback: split by comma
+	parts := strings.Split(trimmed, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean, _ := parseSingleEmail(part)
+		if clean != "" {
+			result = append(result, clean)
 		}
 	}
-
 	return result
 }
 
-// ProcessorRegistry manages active inbox processors
-type ProcessorRegistry struct {
-	processors map[string]*InboxProcessor
-	mu         sync.RWMutex
-}
-
-var (
-	// Global registry for inbox processors
-	Registry = &ProcessorRegistry{
-		processors: make(map[string]*InboxProcessor),
+// Helper: parse flexible email dates
+func parseEmailDate(val string) time.Time {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return time.Time{}
 	}
-)
 
-// Register adds a new processor to the registry
-func (r *ProcessorRegistry) Register(userID string, processor *InboxProcessor) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.processors[userID] = processor
+	// Common RFC formats
+	formats := []string{
+		time.RFC1123Z,
+		time.RFC1123,
+		time.RFC822Z,
+		time.RFC822,
+		"Mon, 2 Jan 2006 15:04:05 -0700",
+		"Mon, 2 Jan 2006 15:04:05 -0700 (MST)",
+		"2 Jan 2006 15:04:05 -0700",
+		"2 Jan 2006 15:04:05 +0000",
+		"2006-01-02 15:04:05 -0700",
+		time.RFC3339,
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, val); err == nil {
+			return t
+		}
+	}
+
+	return time.Time{}
 }
 
-// Get retrieves a processor from the registry
-func (r *ProcessorRegistry) Get(userID string) (*InboxProcessor, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	proc, ok := r.processors[userID]
-	return proc, ok
-}
-
-// Remove deletes a processor from the registry
-func (r *ProcessorRegistry) Remove(userID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.processors, userID)
+// Helper: check if error is Google quota or rate limit error
+func isQuotaOrRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if gErr, ok := err.(*googleapi.Error); ok {
+		if gErr.Code == 429 || gErr.Code == 403 || gErr.Code >= 500 {
+			return true
+		}
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "quota")
 }

@@ -15,29 +15,35 @@ func init() {
 	// Load environment variables from .env file
 	err := godotenv.Load()
 	if err != nil {
-		log.Printf("Error loading .env file: %v", err)
+		log.Printf("Note: .env file not loaded: %v", err)
 	}
 }
 
 func main() {
 	router := mux.NewRouter()
 
-	// Initialize API
+	// Initialize API and persistent database
 	api.Init()
 
-	// API Routes
+	// Auth routes
 	router.HandleFunc("/auth/gmail", api.HandleGmailAuth).Methods("GET")
 	router.HandleFunc("/auth/gmail/callback", api.HandleGmailCallback).Methods("GET")
+	router.HandleFunc("/api/auth/me", api.HandleGetMe).Methods("GET")
+	router.HandleFunc("/api/auth/logout", api.HandleLogout).Methods("POST")
+
+	// Email routes - strictly read-only
 	router.HandleFunc("/api/emails", api.HandleGetEmails).Methods("GET")
-	router.HandleFunc("/api/emails/{id}", api.HandleDeleteEmail).Methods("DELETE")
+	router.HandleFunc("/api/emails/{id}", api.HandleGetEmailByID).Methods("GET")
 
-	// Inbox processing routes
+	// Inbox processing & analysis routes
 	router.HandleFunc("/api/inbox/process", api.HandleStartProcessingInbox).Methods("POST")
+	router.HandleFunc("/api/inbox/pause", api.HandlePauseProcessingInbox).Methods("POST")
 	router.HandleFunc("/api/inbox/status", api.HandleGetInboxStatus).Methods("GET")
-	router.HandleFunc("/api/inbox/top-senders", api.HandleGetTopSenders).Methods("GET")
 	router.HandleFunc("/api/inbox/stats", api.HandleGetEmailStats).Methods("GET")
+	router.HandleFunc("/api/inbox/contacts", api.HandleGetContacts).Methods("GET")
+	router.HandleFunc("/api/inbox/top-senders", api.HandleGetTopSenders).Methods("GET")
 
-	// Serve Svelte frontend from dist directory
+	// Serve Vue frontend from dist directory
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./frontend/dist")))
 
 	// Start server
