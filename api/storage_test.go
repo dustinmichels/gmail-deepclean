@@ -238,7 +238,7 @@ func TestEmailBatchAndContactStats(t *testing.T) {
 	}
 
 	// Test GetEmails filter by sender
-	senderEmails, total, err := storage.GetEmails(userID, "newsletter@marketing.com", "", 10, 0)
+	senderEmails, total, err := storage.GetEmails(userID, "newsletter@marketing.com", "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("GetEmails failed: %v", err)
 	}
@@ -248,7 +248,21 @@ func TestEmailBatchAndContactStats(t *testing.T) {
 	if senderEmails[0].Subject != "Huge Sales This Weekend!" {
 		t.Errorf("Unexpected subject: %s", senderEmails[0].Subject)
 	}
+	if !senderEmails[0].SenderNeverEmailed {
+		t.Errorf("Expected newsletter to be marked as SenderNeverEmailed")
+	}
+	if senderEmails[0].SenderEmailCount != 1 {
+		t.Errorf("Expected SenderEmailCount to be 1, got %d", senderEmails[0].SenderEmailCount)
+	}
 
+	// Test GetEmails filter="never_emailed"
+	neverEmails, neverTotal, err := storage.GetEmails(userID, "", "", "never_emailed", 10, 0)
+	if err != nil {
+		t.Fatalf("GetEmails never_emailed failed: %v", err)
+	}
+	if neverTotal != 2 || len(neverEmails) != 2 {
+		t.Errorf("Expected 2 never_emailed emails, got total=%d len=%d", neverTotal, len(neverEmails))
+	}
 	// Test GetEmailByID
 	msg1, err := storage.GetEmailByID(userID, "msg-1")
 	if err != nil {
@@ -351,7 +365,7 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetContactStats failed: %v", err)
 	}
-	_, emailCountFirst, err := storage.GetEmails(userID, "", "", 10, 0)
+	_, emailCountFirst, err := storage.GetEmails(userID, "", "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("GetEmails failed: %v", err)
 	}
@@ -374,7 +388,7 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second GetContactStats failed: %v", err)
 	}
-	_, emailCountSecond, err := storage.GetEmails(userID, "", "", 10, 0)
+	_, emailCountSecond, err := storage.GetEmails(userID, "", "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("Second GetEmails failed: %v", err)
 	}

@@ -10,9 +10,12 @@
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "fmt": "oxfmt"
   },
   "dependencies": {
+    "lucide-vue": "npm:lucide-vue-next@^1.0.0",
+    "lucide-vue-next": "^1.0.0",
     "vue": "^3.5.43"
   },
   "devDependencies": {
@@ -22,6 +25,7 @@
     "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.9.1",
     "happy-dom": "^20.14.5",
+    "oxfmt": "^0.71.0",
     "typescript": "^6.0.3",
     "vite": "^8.3.1",
     "vite-plugin-vue-devtools": "^8.2.1",

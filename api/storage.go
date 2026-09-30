@@ -16,26 +16,26 @@ import (
 
 // Session represents an authenticated user session
 type Session struct {
-	Token        string        `json:"token"`
-	UserID       string        `json:"userId"`
-	UserEmail    string        `json:"userEmail"`
-	OAuthToken   *oauth2.Token `json:"-"`
-	CreatedAt    time.Time     `json:"createdAt"`
-	ExpiresAt    time.Time     `json:"expiresAt"`
+	Token      string        `json:"token"`
+	UserID     string        `json:"userId"`
+	UserEmail  string        `json:"userEmail"`
+	OAuthToken *oauth2.Token `json:"-"`
+	CreatedAt  time.Time     `json:"createdAt"`
+	ExpiresAt  time.Time     `json:"expiresAt"`
 }
 
 // ContactStat stores aggregated communication metrics with an email contact
 type ContactStat struct {
-	Email         string    `json:"email"`
-	Name          string    `json:"name"`
-	ReceivedCount int       `json:"receivedCount"`
-	SentCount     int       `json:"sentCount"`
-	TotalSize     int64     `json:"totalSize"`
+	Email         string     `json:"email"`
+	Name          string     `json:"name"`
+	ReceivedCount int        `json:"receivedCount"`
+	SentCount     int        `json:"sentCount"`
+	TotalSize     int64      `json:"totalSize"`
 	FirstReceived *time.Time `json:"firstReceived,omitempty"`
 	LastReceived  *time.Time `json:"lastReceived,omitempty"`
 	FirstSent     *time.Time `json:"firstSent,omitempty"`
 	LastSent      *time.Time `json:"lastSent,omitempty"`
-	NeverEmailed  bool      `json:"neverEmailed"`
+	NeverEmailed  bool       `json:"neverEmailed"`
 }
 
 // OverallStats contains high-level metrics for the user's inbox
@@ -50,13 +50,14 @@ type OverallStats struct {
 
 // ScanState tracks background scanning state across restarts
 type ScanState struct {
-	UserID        string     `json:"userId"`
-	IsProcessing  bool       `json:"isProcessing"`
-	TotalEmails   int        `json:"totalEmails"`
-	NextPageToken string     `json:"nextPageToken"`
-	StatusMessage string     `json:"statusMessage"`
-	LastScannedAt *time.Time `json:"lastScannedAt,omitempty"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
+	UserID         string     `json:"userId"`
+	IsProcessing   bool       `json:"isProcessing"`
+	TotalEmails    int        `json:"totalEmails"`
+	EstimatedTotal int64      `json:"estimatedTotal"`
+	NextPageToken  string     `json:"nextPageToken"`
+	StatusMessage  string     `json:"statusMessage"`
+	LastScannedAt  *time.Time `json:"lastScannedAt,omitempty"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 // Storage manages persistent SQLite storage
@@ -164,12 +165,16 @@ func (s *Storage) migrate() error {
 			user_id TEXT PRIMARY KEY,
 			is_processing INTEGER NOT NULL DEFAULT 0,
 			total_emails INTEGER NOT NULL DEFAULT 0,
+			estimated_total INTEGER NOT NULL DEFAULT 0,
 			next_page_token TEXT NOT NULL DEFAULT '',
 			status_message TEXT NOT NULL DEFAULT '',
 			last_scanned_at DATETIME,
 			updated_at DATETIME NOT NULL
 		);`,
 	}
+
+	// Ensure backwards compatibility for existing databases without estimated_total column
+	_, _ = s.db.Exec(`ALTER TABLE scan_state ADD COLUMN estimated_total INTEGER NOT NULL DEFAULT 0;`)
 
 	for _, q := range queries {
 		if _, err := s.db.Exec(q); err != nil {
@@ -340,13 +345,14 @@ func (s *Storage) GetScanState(userID string) (*ScanState, error) {
 	)
 
 	err := s.db.QueryRow(`
-		SELECT user_id, is_processing, total_emails, next_page_token, status_message, last_scanned_at, updated_at
+		SELECT user_id, is_processing, total_emails, estimated_total, next_page_token, status_message, last_scanned_at, updated_at
 		FROM scan_state
 		WHERE user_id = ?
 	`, userID).Scan(
 		&state.UserID,
 		&isProcInt,
 		&state.TotalEmails,
+		&state.EstimatedTotal,
 		&state.NextPageToken,
 		&state.StatusMessage,
 		&lastScannedAt,
@@ -387,16 +393,17 @@ func (s *Storage) SaveScanState(state *ScanState) error {
 
 	_, err := s.db.Exec(`
 		INSERT INTO scan_state (
-			user_id, is_processing, total_emails, next_page_token, status_message, last_scanned_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+			user_id, is_processing, total_emails, estimated_total, next_page_token, status_message, last_scanned_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			is_processing = excluded.is_processing,
 			total_emails = excluded.total_emails,
+			estimated_total = excluded.estimated_total,
 			next_page_token = excluded.next_page_token,
 			status_message = excluded.status_message,
 			last_scanned_at = excluded.last_scanned_at,
 			updated_at = excluded.updated_at
-	`, state.UserID, isProcInt, state.TotalEmails, state.NextPageToken, state.StatusMessage, state.LastScannedAt, now)
+	`, state.UserID, isProcInt, state.TotalEmails, state.EstimatedTotal, state.NextPageToken, state.StatusMessage, state.LastScannedAt, now)
 	return err
 }
 
@@ -683,29 +690,38 @@ func (s *Storage) GetOverallStats(userID string) (*OverallStats, error) {
 	return &stats, nil
 }
 
-// GetEmails retrieves emails for a user with optional sender filter, search, and pagination
-func (s *Storage) GetEmails(userID, senderFilter, search string, limit, offset int) ([]EmailMetadata, int, error) {
+// GetEmails retrieves emails for a user with optional sender filter, search, filter mode ("never_emailed"), and pagination
+func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, offset int) ([]EmailMetadata, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	whereClauses := []string{"user_id = ?"}
+	whereClauses := []string{"e.user_id = ?"}
 	args := []interface{}{userID}
 
 	if senderFilter != "" {
-		whereClauses = append(whereClauses, "from_address = ?")
+		whereClauses = append(whereClauses, "e.from_address = ?")
 		args = append(args, strings.ToLower(strings.TrimSpace(senderFilter)))
 	}
 
 	if search != "" {
-		whereClauses = append(whereClauses, "(subject LIKE ? OR snippet LIKE ? OR from_address LIKE ?)")
+		whereClauses = append(whereClauses, "(e.subject LIKE ? OR e.snippet LIKE ? OR e.from_address LIKE ?)")
 		term := "%" + strings.ToLower(search) + "%"
 		args = append(args, term, term, term)
+	}
+
+	if filter == "never_emailed" {
+		whereClauses = append(whereClauses, "e.is_sent = 0", "COALESCE(cs.sent_count, 0) = 0", "COALESCE(cs.received_count, 0) > 0")
 	}
 
 	whereSQL := strings.Join(whereClauses, " AND ")
 
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM emails WHERE %s", whereSQL)
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM emails e
+		LEFT JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address
+		WHERE %s
+	`, whereSQL)
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -718,11 +734,14 @@ func (s *Storage) GetEmails(userID, senderFilter, search string, limit, offset i
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, thread_id, from_address, from_name, to_addresses,
-		       subject, snippet, date, size_estimate, label_ids, is_sent
-		FROM emails
+		SELECT e.id, e.thread_id, e.from_address, e.from_name, e.to_addresses,
+		       e.subject, e.snippet, e.date, e.size_estimate, e.label_ids, e.is_sent,
+		       COALESCE(cs.sent_count, 0) as cs_sent,
+		       COALESCE(cs.received_count, 0) as cs_recv
+		FROM emails e
+		LEFT JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address
 		WHERE %s
-		ORDER BY date DESC
+		ORDER BY e.date DESC
 		LIMIT ? OFFSET ?
 	`, whereSQL)
 
@@ -743,6 +762,8 @@ func (s *Storage) GetEmails(userID, senderFilter, search string, limit, offset i
 			fromName        sql.NullString
 			subject         sql.NullString
 			snippet         sql.NullString
+			csSent          int
+			csRecv          int
 		)
 
 		err := rows.Scan(
@@ -757,6 +778,8 @@ func (s *Storage) GetEmails(userID, senderFilter, search string, limit, offset i
 			&em.SizeEstimate,
 			&labelIDsJSON,
 			&isSentInt,
+			&csSent,
+			&csRecv,
 		)
 		if err != nil {
 			return nil, 0, err
@@ -766,6 +789,8 @@ func (s *Storage) GetEmails(userID, senderFilter, search string, limit, offset i
 		em.Subject = subject.String
 		em.Snippet = snippet.String
 		em.IsSent = isSentInt == 1
+		em.SenderNeverEmailed = !em.IsSent && csRecv > 0 && csSent == 0
+		em.SenderEmailCount = csRecv
 
 		_ = json.Unmarshal([]byte(toAddressesJSON), &em.To)
 		_ = json.Unmarshal([]byte(labelIDsJSON), &em.LabelIDs)
@@ -789,13 +814,17 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 		fromName        sql.NullString
 		subject         sql.NullString
 		snippet         sql.NullString
+		csSent          int
+		csRecv          int
 	)
-
 	err := s.db.QueryRow(`
-		SELECT id, thread_id, from_address, from_name, to_addresses,
-		       subject, snippet, date, size_estimate, label_ids, is_sent
-		FROM emails
-		WHERE user_id = ? AND id = ?
+		SELECT e.id, e.thread_id, e.from_address, e.from_name, e.to_addresses,
+		       e.subject, e.snippet, e.date, e.size_estimate, e.label_ids, e.is_sent,
+		       COALESCE(cs.sent_count, 0) as cs_sent,
+		       COALESCE(cs.received_count, 0) as cs_recv
+		FROM emails e
+		LEFT JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address
+		WHERE e.user_id = ? AND e.id = ?
 	`, userID, emailID).Scan(
 		&em.ID,
 		&em.ThreadID,
@@ -808,6 +837,8 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 		&em.SizeEstimate,
 		&labelIDsJSON,
 		&isSentInt,
+		&csSent,
+		&csRecv,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -820,7 +851,8 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 	em.Subject = subject.String
 	em.Snippet = snippet.String
 	em.IsSent = isSentInt == 1
-
+	em.SenderNeverEmailed = !em.IsSent && csRecv > 0 && csSent == 0
+	em.SenderEmailCount = csRecv
 	_ = json.Unmarshal([]byte(toAddressesJSON), &em.To)
 	_ = json.Unmarshal([]byte(labelIDsJSON), &em.LabelIDs)
 

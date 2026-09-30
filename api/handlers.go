@@ -19,6 +19,7 @@ func HandleGetEmails(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	sender := query.Get("sender")
 	search := query.Get("search")
+	filter := query.Get("filter")
 
 	limit := 25
 	if l := query.Get("limit"); l != "" {
@@ -34,7 +35,7 @@ func HandleGetEmails(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	emails, total, err := DB.GetEmails(sess.UserID, sender, search, limit, offset)
+	emails, total, err := DB.GetEmails(sess.UserID, sender, search, filter, limit, offset)
 	if err != nil {
 		http.Error(w, "Failed to retrieve emails: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -46,8 +46,8 @@ describe('EmailList', () => {
     expect(wrapper.text()).toContain('Quarterly Review Meeting')
     expect(wrapper.text()).toContain('Jane Doe')
     expect(wrapper.text()).toContain('Invoice #1042')
-    expect(wrapper.text()).toContain('⬇ Received')
-    expect(wrapper.text()).toContain('⬆ Sent')
+    expect(wrapper.find('.direction-badge.received').text()).toContain('Received')
+    expect(wrapper.find('.direction-badge.sent').text()).toContain('Sent')
   })
 
   it('toggles expanded details when an email card is clicked', async () => {
@@ -84,5 +84,45 @@ describe('EmailList', () => {
 
     expect(wrapper.emitted('update:search')).toBeTruthy()
     expect(wrapper.emitted('update:search')![0]).toEqual(['Meeting'])
+  })
+
+  it('highlights senders whom user never emailed and displays their count', () => {
+    const wrapper = mount(EmailList, {
+      props: {
+        ...defaultProps,
+        emails: [
+          {
+            id: 'email-special',
+            threadId: 'th-spec',
+            from: 'unreplied@vendor.com',
+            fromName: 'Vendor Deals',
+            to: ['me@gmail.com'],
+            subject: 'Flash Sale',
+            snippet: 'Don’t miss this sale!',
+            date: '2026-09-28T14:30:00Z',
+            labelIds: ['INBOX'],
+            sizeEstimate: 5000,
+            isSent: false,
+            senderNeverEmailed: true,
+            senderEmailCount: 24,
+          },
+        ],
+        total: 1,
+      },
+    })
+
+    expect(wrapper.find('.never-emailed-card').exists()).toBe(true)
+    expect(wrapper.find('.never-emailed-badge').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Never Emailed Back')
+    expect(wrapper.text()).toContain('24 received')
+  })
+
+  it('emits update:filter-mode when filter tabs are clicked', async () => {
+    const wrapper = mount(EmailList, { props: defaultProps })
+    const alertChip = wrapper.find('.alert-chip')
+    await alertChip.trigger('click')
+
+    expect(wrapper.emitted('update:filter-mode')).toBeTruthy()
+    expect(wrapper.emitted('update:filter-mode')![0]).toEqual(['never_emailed'])
   })
 })

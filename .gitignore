@@ -3,3 +3,5 @@ client_secret_*
 .env
 data/
 *.db
+tmp/
+bin/

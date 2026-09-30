@@ -7,6 +7,7 @@ export function useScan(authHeaders: () => Record<string, string>) {
     userEmail: '',
     isProcessing: false,
     totalEmails: 0,
+    estimatedTotal: 0,
     statusMessage: 'Ready to scan',
   })
 
@@ -29,7 +30,8 @@ export function useScan(authHeaders: () => Record<string, string>) {
     try {
       const res = await fetch('/api/inbox/status', { headers })
       if (res.ok) {
-        progress.value = await res.json()
+        const data: ScanProgress = await res.json()
+        progress.value = data
       }
     } catch (e) {
       console.error('Failed to fetch scan status:', e)
@@ -50,9 +52,32 @@ export function useScan(authHeaders: () => Record<string, string>) {
     }
   }
 
+  const startPolling = () => {
+    clearInterval(pollInterval ?? undefined)
+    pollInterval = window.setInterval(async () => {
+      await fetchStatus()
+      await fetchStats()
+      if (!progress.value.isProcessing) {
+        stopPolling()
+      }
+    }, 1000)
+  }
+  const stopPolling = () => {
+    clearInterval(pollInterval ?? undefined)
+    pollInterval = null
+  }
+
   const startScan = async (reset = false) => {
     const headers = authHeaders()
     if (!headers.Authorization) return
+
+    // Optimistically indicate scan has started for immediate UI response
+    progress.value = {
+      ...progress.value,
+      isProcessing: true,
+      statusMessage: reset ? 'Starting new inbox scan...' : 'Resuming scan...',
+    }
+    startPolling()
 
     try {
       const res = await fetch(`/api/inbox/process?reset=${reset}`, {
@@ -61,10 +86,13 @@ export function useScan(authHeaders: () => Record<string, string>) {
       })
       if (res.ok) {
         progress.value = await res.json()
-        startPolling()
+        await fetchStats()
+      } else {
+        await fetchStatus()
       }
     } catch (e) {
       console.error('Failed to start scan:', e)
+      await fetchStatus()
     }
   }
 
@@ -84,24 +112,6 @@ export function useScan(authHeaders: () => Record<string, string>) {
       }
     } catch (e) {
       console.error('Failed to pause scan:', e)
-    }
-  }
-
-  const startPolling = () => {
-    clearInterval(pollInterval ?? undefined)
-    pollInterval = setInterval(async () => {
-      await fetchStatus()
-      await fetchStats()
-      if (!progress.value.isProcessing) {
-        stopPolling()
-      }
-    }, 2000)
-  }
-
-  const stopPolling = () => {
-    if (pollInterval) {
-      clearInterval(pollInterval)
-      pollInterval = null
     }
   }
 

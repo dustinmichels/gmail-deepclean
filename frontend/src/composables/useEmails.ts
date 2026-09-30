@@ -14,6 +14,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const emails = ref<EmailMetadata[]>([])
   const totalEmails = ref(0)
   const selectedSender = ref<string | null>(null)
+  const emailsFilter = ref<'all' | 'never_emailed'>('all')
   const emailsSearch = ref<string>('')
   const emailsLoading = ref(false)
   const emailsOffset = ref(0)
@@ -65,10 +66,12 @@ export function useEmails(authHeaders: () => Record<string, string>) {
       if (selectedSender.value) {
         params.set('sender', selectedSender.value)
       }
+      if (emailsFilter.value && emailsFilter.value !== 'all') {
+        params.set('filter', emailsFilter.value)
+      }
       if (emailsSearch.value) {
         params.set('search', emailsSearch.value)
       }
-
       const res = await fetch(`/api/emails?${params.toString()}`, { headers })
       if (res.ok) {
         const data: EmailsResponse = await res.json()
@@ -106,7 +109,15 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const exportContactsCSV = () => {
     if (contacts.value.length === 0) return
 
-    const headers = ['Email', 'Name', 'Received Count', 'Sent Count', 'Total Size (Bytes)', 'Never Emailed Back', 'Last Received']
+    const headers = [
+      'Email',
+      'Name',
+      'Received Count',
+      'Sent Count',
+      'Total Size (Bytes)',
+      'Never Emailed Back',
+      'Last Received',
+    ]
     const rows = contacts.value.map((c) => [
       `"${c.email.replace(/"/g, '""')}"`,
       `"${(c.name || '').replace(/"/g, '""')}"`,
@@ -134,6 +145,9 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     fetchContacts()
   })
 
+  watch(emailsFilter, () => {
+    fetchEmails(false)
+  })
   // Debounced search watcher for contacts
   let contactSearchTimer: number | null = null
   watch(contactsSearch, () => {
@@ -162,6 +176,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     emails,
     totalEmails,
     selectedSender,
+    emailsFilter,
     emailsSearch,
     emailsLoading,
     fetchContacts,

@@ -18,40 +18,44 @@ import (
 
 // EmailMetadata stores parsed information about an email message
 type EmailMetadata struct {
-	ID           string    `json:"id"`
-	ThreadID     string    `json:"threadId"`
-	From         string    `json:"from"`
-	FromName     string    `json:"fromName"`
-	To           []string  `json:"to"`
-	Subject      string    `json:"subject"`
-	Date         time.Time `json:"date"`
-	Snippet      string    `json:"snippet"`
-	LabelIDs     []string  `json:"labelIds"`
-	SizeEstimate int64     `json:"sizeEstimate"`
-	IsSent       bool      `json:"isSent"`
+	ID                 string    `json:"id"`
+	ThreadID           string    `json:"threadId"`
+	From               string    `json:"from"`
+	FromName           string    `json:"fromName"`
+	To                 []string  `json:"to"`
+	Subject            string    `json:"subject"`
+	Date               time.Time `json:"date"`
+	Snippet            string    `json:"snippet"`
+	LabelIDs           []string  `json:"labelIds"`
+	SizeEstimate       int64     `json:"sizeEstimate"`
+	IsSent             bool      `json:"isSent"`
+	SenderNeverEmailed bool      `json:"senderNeverEmailed,omitempty"`
+	SenderEmailCount   int       `json:"senderEmailCount,omitempty"`
 }
 
 // ProgressInfo represents the current scanning progress
 type ProgressInfo struct {
-	UserID        string     `json:"userId"`
-	UserEmail     string     `json:"userEmail"`
-	IsProcessing  bool       `json:"isProcessing"`
-	TotalEmails   int        `json:"totalEmails"`
-	StatusMessage string     `json:"statusMessage"`
-	LastScannedAt *time.Time `json:"lastScannedAt,omitempty"`
+	UserID         string     `json:"userId"`
+	UserEmail      string     `json:"userEmail"`
+	IsProcessing   bool       `json:"isProcessing"`
+	TotalEmails    int        `json:"totalEmails"`
+	EstimatedTotal int64      `json:"estimatedTotal"`
+	StatusMessage  string     `json:"statusMessage"`
+	LastScannedAt  *time.Time `json:"lastScannedAt,omitempty"`
 }
 
 // InboxProcessor coordinates quota-safe background downloading and processing of Gmail messages
 type InboxProcessor struct {
-	userID        string
-	userEmail     string
-	oauthToken    *oauth2.Token
-	service       *gmail.Service
-	scanState     *ScanState
-	cancelFunc    context.CancelFunc
-	mu            sync.RWMutex
-	concurrency   int
-	rateLimiter   *time.Ticker
+	userID         string
+	userEmail      string
+	oauthToken     *oauth2.Token
+	service        *gmail.Service
+	scanState      *ScanState
+	cancelFunc     context.CancelFunc
+	mu             sync.RWMutex
+	concurrency    int
+	rateLimiter    *time.Ticker
+	estimatedTotal int64
 }
 
 // Global registry of active processors per user
@@ -113,13 +117,14 @@ func NewInboxProcessor(userID, userEmail string, token *oauth2.Token) (*InboxPro
 	state.IsProcessing = false
 
 	return &InboxProcessor{
-		userID:      userID,
-		userEmail:   strings.ToLower(strings.TrimSpace(userEmail)),
-		oauthToken:  token,
-		service:     service,
-		scanState:   state,
-		concurrency: 5,                                 // Bounded worker pool: 5 concurrent workers
-		rateLimiter: time.NewTicker(60 * time.Millisecond), // Max ~16 requests/sec (well under 250 units/sec limit)
+		userID:         userID,
+		userEmail:      strings.ToLower(strings.TrimSpace(userEmail)),
+		oauthToken:     token,
+		service:        service,
+		scanState:      state,
+		concurrency:    20,                                    // Bounded worker pool: 20 concurrent workers
+		rateLimiter:    time.NewTicker(25 * time.Millisecond), // Max 40 requests/sec (~200 units/sec, leaving quota headroom under 250 units/sec limit)
+		estimatedTotal: state.EstimatedTotal,
 	}, nil
 }
 
@@ -179,12 +184,13 @@ func (p *InboxProcessor) GetProgress() ProgressInfo {
 	defer p.mu.RUnlock()
 
 	return ProgressInfo{
-		UserID:        p.userID,
-		UserEmail:     p.userEmail,
-		IsProcessing:  p.scanState.IsProcessing,
-		TotalEmails:   p.scanState.TotalEmails,
-		StatusMessage: p.scanState.StatusMessage,
-		LastScannedAt: p.scanState.LastScannedAt,
+		UserID:         p.userID,
+		UserEmail:      p.userEmail,
+		IsProcessing:   p.scanState.IsProcessing,
+		TotalEmails:    p.scanState.TotalEmails,
+		EstimatedTotal: p.estimatedTotal,
+		StatusMessage:  p.scanState.StatusMessage,
+		LastScannedAt:  p.scanState.LastScannedAt,
 	}
 }
 
@@ -205,6 +211,14 @@ func (p *InboxProcessor) runScan(ctx context.Context) {
 
 	log.Printf("[%s] Starting inbox scan for %s", p.userID, p.userEmail)
 
+	p.updateStatus("Connecting to Gmail...")
+	if profile, err := p.service.Users.GetProfile(user).Context(ctx).Do(); err == nil && profile != nil {
+		p.mu.Lock()
+		p.estimatedTotal = profile.MessagesTotal
+		p.scanState.EstimatedTotal = profile.MessagesTotal
+		_ = DB.SaveScanState(p.scanState)
+		p.mu.Unlock()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -274,16 +288,25 @@ func (p *InboxProcessor) runScan(ctx context.Context) {
 		if len(results) > 0 {
 			if err := DB.SaveEmailsBatch(p.userID, results); err != nil {
 				log.Printf("[%s] Error saving emails batch: %v", p.userID, err)
+				p.updateStatus(fmt.Sprintf("Error saving emails: %v", err))
+				return
 			}
 		}
 
 		p.mu.Lock()
 		p.scanState.TotalEmails += len(results)
 		p.scanState.NextPageToken = resp.NextPageToken
-		p.scanState.StatusMessage = fmt.Sprintf("Scanned %d emails...", p.scanState.TotalEmails)
+		if p.estimatedTotal > 0 {
+			pct := int(float64(p.scanState.TotalEmails) / float64(p.estimatedTotal) * 100)
+			if pct > 100 {
+				pct = 100
+			}
+			p.scanState.StatusMessage = fmt.Sprintf("Scanned %d of ~%d emails (%d%%)", p.scanState.TotalEmails, p.estimatedTotal, pct)
+		} else {
+			p.scanState.StatusMessage = fmt.Sprintf("Scanned %d emails...", p.scanState.TotalEmails)
+		}
 		_ = DB.SaveScanState(p.scanState)
 		p.mu.Unlock()
-
 		log.Printf("[%s] Batch of %d messages processed. Total: %d", p.userID, len(results), p.scanState.TotalEmails)
 
 		if resp.NextPageToken == "" {
@@ -324,7 +347,7 @@ func (p *InboxProcessor) processMessageBatch(ctx context.Context, messages []*gm
 					}
 					meta, err := p.fetchMessageDetails(ctx, msg.Id)
 					if err != nil {
-						// Log and skip on failure
+						log.Printf("[%s] Warning: failed fetching message %s: %v", p.userID, msg.Id, err)
 						continue
 					}
 					if meta != nil {
@@ -359,7 +382,11 @@ func (p *InboxProcessor) fetchMessageDetails(ctx context.Context, messageID stri
 		case <-p.rateLimiter.C:
 		}
 
-		msg, err = p.service.Users.Messages.Get(user, messageID).Format("full").Context(ctx).Do()
+		msg, err = p.service.Users.Messages.Get(user, messageID).
+			Format("metadata").
+			MetadataHeaders("From", "To", "Cc", "Subject", "Date").
+			Context(ctx).
+			Do()
 		if err == nil {
 			break
 		}
@@ -378,6 +405,9 @@ func (p *InboxProcessor) fetchMessageDetails(ctx context.Context, messageID stri
 	}
 
 	if msg == nil {
+		if err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("message %s not found", messageID)
 	}
 

@@ -47,6 +47,7 @@ export interface ScanProgress {
   userEmail: string
   isProcessing: boolean
   totalEmails: number
+  estimatedTotal?: number
   statusMessage: string
   lastScannedAt?: string
 }
@@ -63,6 +64,8 @@ export interface EmailMetadata {
   labelIds: string[]
   sizeEstimate: number
   isSent: boolean
+  senderNeverEmailed?: boolean
+  senderEmailCount?: number
 }
 
 export interface EmailsResponse {

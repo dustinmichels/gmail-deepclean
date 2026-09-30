@@ -77,4 +77,26 @@ describe('ScanDashboard', () => {
     expect(wrapper.emitted('select-tab')).toBeTruthy()
     expect(wrapper.emitted('select-tab')![0]).toEqual(['never_emailed'])
   })
+
+  it('renders progress bar and percentage when scanning with estimatedTotal', () => {
+    const wrapper = mount(ScanDashboard, {
+      props: {
+        ...defaultProps,
+        isScanning: true,
+        progress: {
+          ...defaultProps.progress,
+          isProcessing: true,
+          totalEmails: 50,
+          estimatedTotal: 200,
+          statusMessage: 'Scanning email 50 of ~200...',
+        },
+      },
+    })
+
+    expect(wrapper.find('.progress-track').exists()).toBe(true)
+    expect(wrapper.find('.progress-fill').exists()).toBe(true)
+    expect(wrapper.text()).toContain('25%')
+    expect(wrapper.text()).toContain('50')
+    expect(wrapper.text()).toContain('200')
+  })
 })

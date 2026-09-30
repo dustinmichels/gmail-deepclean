@@ -59,12 +59,13 @@ func HandlePauseProcessingInbox(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProgressInfo{
-		UserID:        sess.UserID,
-		UserEmail:     sess.UserEmail,
-		IsProcessing:  false,
-		TotalEmails:   state.TotalEmails,
-		StatusMessage: state.StatusMessage,
-		LastScannedAt: state.LastScannedAt,
+		UserID:         sess.UserID,
+		UserEmail:      sess.UserEmail,
+		IsProcessing:   false,
+		TotalEmails:    state.TotalEmails,
+		EstimatedTotal: state.EstimatedTotal,
+		StatusMessage:  state.StatusMessage,
+		LastScannedAt:  state.LastScannedAt,
 	})
 }
 
@@ -92,12 +93,13 @@ func HandleGetInboxStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProgressInfo{
-		UserID:        sess.UserID,
-		UserEmail:     sess.UserEmail,
-		IsProcessing:  state.IsProcessing,
-		TotalEmails:   state.TotalEmails,
-		StatusMessage: state.StatusMessage,
-		LastScannedAt: state.LastScannedAt,
+		UserID:         sess.UserID,
+		UserEmail:      sess.UserEmail,
+		IsProcessing:   state.IsProcessing,
+		TotalEmails:    state.TotalEmails,
+		EstimatedTotal: state.EstimatedTotal,
+		StatusMessage:  state.StatusMessage,
+		LastScannedAt:  state.LastScannedAt,
 	})
 }
 

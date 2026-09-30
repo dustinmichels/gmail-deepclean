@@ -38,29 +38,33 @@ PORT=8080
 
 > For step-by-step instructions on setting up Google Cloud Console credentials, see [docs/oauth.md](docs/oauth.md).
 
-### 3. Build & Run
+### 3. Development (Live Reload)
 
-You can use the startup script:
-
-```bash
-./run.sh
-```
-
-Or run manually:
+Use `mise` to run both the Go server (with Air for hot reloading) and Vite dev server (with Vue HMR) concurrently:
 
 ```bash
-# Build the Vue frontend
-cd frontend
-bun install
-bun run build
-cd ..
-
-# Start the Go server
-go run .
+mise run dev
 ```
 
-Open [http://localhost:8080](http://localhost:8080) in your browser.
+- **Frontend (Vite)**: [http://localhost:5173](http://localhost:5173) (proxies `/api` and `/auth` to Go backend)
+- **Backend (Go + Air)**: [http://localhost:8080](http://localhost:8080)
 
+You can also run them individually:
+```bash
+mise run dev:server    # Air only
+mise run dev:frontend  # Vite only
+```
+
+### 4. Production Build & Run
+
+To build both artifacts:
+
+```bash
+mise run build
+# or ./run.sh
+```
+
+When running the compiled server directly or with `./run.sh`, the Go server serves the static frontend from `./frontend/dist` on [http://localhost:8080](http://localhost:8080).
 ---
 
 ## Documentation

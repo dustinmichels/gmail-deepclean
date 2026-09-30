@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 )
 
@@ -85,5 +86,26 @@ func TestIsQuotaOrRateLimitErr(t *testing.T) {
 	unrelatedErr := errors.New("unrelated connection error")
 	if isQuotaOrRateLimitErr(unrelatedErr) {
 		t.Errorf("unrelated error should not be detected as quota error")
+	}
+}
+
+func TestNewInboxProcessorConfiguration(t *testing.T) {
+	DB = setupTestDB(t)
+	oauthConfig = &oauth2.Config{}
+
+	token := &oauth2.Token{
+		AccessToken: "mock-access-token",
+	}
+
+	proc, err := NewInboxProcessor("user123", "test@example.com", token)
+	if err != nil {
+		t.Fatalf("NewInboxProcessor failed: %v", err)
+	}
+
+	if proc.concurrency != 20 {
+		t.Errorf("Expected concurrency=20, got %d", proc.concurrency)
+	}
+	if proc.rateLimiter == nil {
+		t.Errorf("Expected non-nil rateLimiter")
 	}
 }

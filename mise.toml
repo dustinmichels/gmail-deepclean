@@ -1,3 +1,60 @@
 [tools]
+air = "1.67.4"
 bun = "1.4.2"
 go = "1.27.1"
+
+[tasks."dev:server"]
+description = "Start Go server with Air (live reload)"
+run = "air"
+
+[tasks."dev:frontend"]
+description = "Start Vite dev server (Vue)"
+dir = "frontend"
+run = "bun run dev"
+
+[tasks."dev:banner"]
+description = "Show clear link to dev app once servers are ready"
+run = "./scripts/dev-ready.sh"
+
+[tasks.dev]
+description = "Run backend and frontend dev servers concurrently"
+depends = ["dev:server", "dev:frontend", "dev:banner"]
+
+[tasks."build:frontend"]
+description = "Build Vue frontend for production"
+dir = "frontend"
+run = "bun run build"
+
+[tasks."build:server"]
+description = "Build Go server binary"
+run = "go build -o bin/gmail-deepclean ."
+
+[tasks.build]
+description = "Build frontend and backend for production"
+depends = ["build:frontend", "build:server"]
+
+[tasks."test:frontend"]
+description = "Run Vue/frontend unit tests"
+dir = "frontend"
+run = "bun run test"
+
+[tasks."test:server"]
+description = "Run Go tests"
+run = "go test ./..."
+
+[tasks.test]
+description = "Run all tests"
+depends = ["test:server", "test:frontend"]
+
+[tasks."fmt:frontend"]
+description = "Format frontend with oxfmt"
+dir = "frontend"
+run = "bun run fmt"
+
+[tasks."fmt:server"]
+description = "Format Go code"
+run = "go fmt ./..."
+
+[tasks.fmt]
+description = "Format frontend and Go code"
+depends = ["fmt:server", "fmt:frontend"]

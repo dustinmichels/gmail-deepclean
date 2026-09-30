@@ -153,7 +153,20 @@ func HandleGmailCallback(w http.ResponseWriter, r *http.Request) {
         try {
             const data = %s;
             if (window.opener) {
-                window.opener.postMessage({ type: 'GMAIL_AUTH_SUCCESS', session: data }, window.location.origin);
+                // Support both production (same origin) and Vite dev server (port 5173)
+                const allowedOrigins = [
+                    window.location.origin,
+                    'http://localhost:5173',
+                    'http://127.0.0.1:5173',
+                    'http://localhost:8080',
+                    'http://127.0.0.1:8080'
+                ];
+                const uniqueOrigins = Array.from(new Set(allowedOrigins));
+                uniqueOrigins.forEach(function(targetOrigin) {
+                    try {
+                        window.opener.postMessage({ type: 'GMAIL_AUTH_SUCCESS', session: data }, targetOrigin);
+                    } catch (e) {}
+                });
                 setTimeout(function() {
                     window.close();
                 }, 800);
