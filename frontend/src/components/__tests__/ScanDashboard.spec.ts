@@ -28,9 +28,9 @@ describe('ScanDashboard', () => {
 
     expect(wrapper.text()).toContain('120')
     expect(wrapper.text()).toContain('35')
-    expect(wrapper.text()).toContain('18')
-    expect(wrapper.text()).toContain('Never Emailed Back')
     expect(wrapper.text()).toContain('Resume Scan')
+    expect(wrapper.text()).not.toContain('Never Emailed Back')
+    expect(wrapper.find('.highlight-card').exists()).toBe(false)
   })
 
   it('displays Start Inbox Scan when totalEmailsProcessed is 0', () => {
@@ -69,14 +69,6 @@ describe('ScanDashboard', () => {
     expect(wrapper.emitted('pause-scan')).toBeTruthy()
   })
 
-  it('emits select-tab with never_emailed when never emailed card clicked', async () => {
-    const wrapper = mount(ScanDashboard, { props: defaultProps })
-    const card = wrapper.find('.highlight-card')
-    await card.trigger('click')
-
-    expect(wrapper.emitted('select-tab')).toBeTruthy()
-    expect(wrapper.emitted('select-tab')![0]).toEqual(['never_emailed'])
-  })
 
   it('renders progress bar and percentage when scanning with estimatedTotal', () => {
     const wrapper = mount(ScanDashboard, {
@@ -98,5 +90,24 @@ describe('ScanDashboard', () => {
     expect(wrapper.text()).toContain('25%')
     expect(wrapper.text()).toContain('50')
     expect(wrapper.text()).toContain('200')
+  })
+
+  it('renders storage metrics distinguishing cloud space from local db', () => {
+    const wrapper = mount(ScanDashboard, {
+      props: {
+        ...defaultProps,
+        stats: {
+          ...defaultProps.stats,
+          totalSizeBytes: 9500000000,
+          localDbSizeBytes: 31457280,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('Gmail Space Analyzed')
+    expect(wrapper.text()).toContain('Cloud')
+    expect(wrapper.text()).toContain('Local DB:')
+    expect(wrapper.text()).toContain('30 MB')
+    expect(wrapper.text()).toContain('Metadata-only scan')
   })
 })

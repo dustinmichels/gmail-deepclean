@@ -3,6 +3,7 @@ air = "1.67.4"
 bun = "1.4.2"
 go = "1.27.1"
 
+# ----- DEV -----
 [tasks."dev:server"]
 description = "Start Go server with Air (live reload)"
 run = "air"
@@ -17,9 +18,10 @@ description = "Show clear link to dev app once servers are ready"
 run = "./scripts/dev-ready.sh"
 
 [tasks.dev]
-description = "Run backend and frontend dev servers concurrently"
-depends = ["dev:server", "dev:frontend", "dev:banner"]
+description = "Run backend and frontend dev servers with live interactive dashboard"
+run = "bun run scripts/dev.ts"
 
+# ----- BUILD -----
 [tasks."build:frontend"]
 description = "Build Vue frontend for production"
 dir = "frontend"
@@ -33,6 +35,7 @@ run = "go build -o bin/gmail-deepclean ."
 description = "Build frontend and backend for production"
 depends = ["build:frontend", "build:server"]
 
+# ----- TEST -----
 [tasks."test:frontend"]
 description = "Run Vue/frontend unit tests"
 dir = "frontend"
@@ -46,6 +49,7 @@ run = "go test ./..."
 description = "Run all tests"
 depends = ["test:server", "test:frontend"]
 
+# ----- FMT -----
 [tasks."fmt:frontend"]
 description = "Format frontend with oxfmt"
 dir = "frontend"

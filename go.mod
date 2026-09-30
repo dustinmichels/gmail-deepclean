@@ -3,10 +3,12 @@ module github.com/dustinmichels/gmail-deepclean
 go 1.27.1
 
 require (
-	github.com/gorilla/mux v1.8.1
+	github.com/emersion/go-imap v1.2.1
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/oauth2 v0.37.0
 	google.golang.org/api v0.299.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -15,8 +17,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/emersion/go-imap v1.2.1 // indirect
-	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -42,5 +42,4 @@ require (
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.60.1 // indirect
 )

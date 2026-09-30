@@ -40,6 +40,7 @@ export interface OverallStats {
   uniqueSenders: number
   neverEmailedCount: number
   totalSizeBytes: number
+  localDbSizeBytes?: number
 }
 
 export interface ScanProgress {

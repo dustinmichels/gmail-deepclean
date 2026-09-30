@@ -2,6 +2,7 @@ package api
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,6 +210,9 @@ func TestEmailBatchAndContactStats(t *testing.T) {
 	// Alice was replied to; newsletter and stranger were NEVER emailed back!
 	if overall.NeverEmailedCount != 2 {
 		t.Errorf("Expected 2 never-emailed senders, got %d", overall.NeverEmailedCount)
+	}
+	if overall.LocalDbSizeBytes <= 0 {
+		t.Errorf("Expected positive LocalDbSizeBytes, got %d", overall.LocalDbSizeBytes)
 	}
 
 	// Verify "never_emailed" filter
@@ -432,5 +436,131 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 		if c1.TotalSize != c2.TotalSize {
 			t.Errorf("Contact %s TotalSize inflated: first=%d, second=%d", c1.Email, c1.TotalSize, c2.TotalSize)
 		}
+	}
+}
+
+func TestGetContactStatsLegacyTimestamps(t *testing.T) {
+	storage := setupTestDB(t)
+	defer storage.Close()
+
+	userID := "test-legacy-user"
+
+	// Insert contact_stats with varied legacy timestamp strings (e.g. Go time.String() with repeated offsets or timezones)
+	_, err := storage.db.Exec(`
+		INSERT INTO contact_stats (
+			user_id, email, name, received_count, sent_count, total_size,
+			first_received, last_received, first_sent, last_sent
+		) VALUES (
+			?, 'legacy@example.com', 'Legacy Contact', 10, 5, 2048,
+			'2024-06-19 10:52:18 -0700 -0700',
+			'2026-09-12 11:16:37 -0400 EDT',
+			'2024-05-01 09:30:00 -0700 -0700',
+			'2026-01-15 18:22:10 +0000 UTC'
+		)
+	`, userID)
+	if err != nil {
+		t.Fatalf("Failed inserting legacy contact stats: %v", err)
+	}
+
+	contacts, total, err := storage.GetContactStats(userID, "all", "", "received_count", "desc", 10, 0)
+	if err != nil {
+		t.Fatalf("GetContactStats failed on legacy timestamps: %v", err)
+	}
+	if total != 1 || len(contacts) != 1 {
+		t.Fatalf("Expected 1 contact, got total=%d, len=%d", total, len(contacts))
+	}
+
+	c := contacts[0]
+	if c.Email != "legacy@example.com" {
+		t.Errorf("Expected email legacy@example.com, got %s", c.Email)
+	}
+	expectedFirstReceivedUTC := time.Date(2024, 6, 19, 17, 52, 18, 0, time.UTC)
+	if c.FirstReceived == nil || !c.FirstReceived.UTC().Equal(expectedFirstReceivedUTC) {
+		t.Errorf("Unexpected FirstReceived UTC: got %v, expected %v", c.FirstReceived, expectedFirstReceivedUTC)
+	}
+	if c.LastReceived == nil || c.LastReceived.Year() != 2026 || c.LastReceived.Month() != 9 || c.LastReceived.Day() != 12 {
+		t.Errorf("Unexpected LastReceived: %v", c.LastReceived)
+	}
+	if c.FirstSent == nil || c.FirstSent.Year() != 2024 || c.FirstSent.Month() != 5 || c.FirstSent.Day() != 1 {
+		t.Errorf("Unexpected FirstSent: %v", c.FirstSent)
+	}
+	if c.LastSent == nil || c.LastSent.Year() != 2026 || c.LastSent.Month() != 1 || c.LastSent.Day() != 15 {
+		t.Errorf("Unexpected LastSent: %v", c.LastSent)
+	}
+}
+
+func TestGetContactStatsCorruptTimestamp(t *testing.T) {
+	storage := setupTestDB(t)
+	defer storage.Close()
+
+	userID := "test-corrupt-user"
+	_, err := storage.db.Exec(`
+		INSERT INTO contact_stats (
+			user_id, email, name, received_count, sent_count, total_size, first_received
+		) VALUES (
+			?, 'badtime@example.com', 'Bad Time', 5, 0, 1024, 'completely-invalid-date'
+		)
+	`, userID)
+	if err != nil {
+		t.Fatalf("Failed inserting corrupt contact stat: %v", err)
+	}
+
+	_, _, err = storage.GetContactStats(userID, "all", "", "received_count", "desc", 10, 0)
+	if err == nil {
+		t.Fatal("Expected error on corrupt timestamp, got nil")
+	}
+	if !strings.Contains(err.Error(), "badtime@example.com") || !strings.Contains(err.Error(), "first_received") {
+		t.Errorf("Expected error to contain contact email and field name, got: %v", err)
+	}
+}
+func TestGetEmailsLegacyTimestamps(t *testing.T) {
+	storage := setupTestDB(t)
+	defer storage.Close()
+
+	userID := "test-emails-legacy-user"
+
+	_, err := storage.db.Exec(`
+		INSERT INTO emails (
+			id, user_id, thread_id, from_address, from_name, to_addresses,
+			subject, snippet, date, size_estimate, label_ids, is_sent, created_at
+		) VALUES (
+			'msg-legacy-1', ?, 'th-1', 'notification+pvl16c6f@facebookmail.com', 'Facebook', '["me@example.com"]',
+			'Facebook notification', 'You have a notification', '2009-08-01 16:01:23 -0700 -0700', 4096, '["INBOX"]', 0, '2026-09-29 12:00:00'
+		), (
+			'msg-legacy-2', ?, 'th-2', 'notification+pvl16c6f@facebookmail.com', 'Facebook', '["me@example.com"]',
+			'Another notification', 'Another update', '2026-09-12 11:16:37 -0400 EDT', 2048, '["INBOX"]', 0, '2026-09-29 12:00:00'
+		)
+	`, userID, userID)
+	if err != nil {
+		t.Fatalf("Failed inserting emails with legacy timestamps: %v", err)
+	}
+
+	// 1. Test GetEmails by sender
+	emails, total, err := storage.GetEmails(userID, "notification+pvl16c6f@facebookmail.com", "", "", 10, 0)
+	if err != nil {
+		t.Fatalf("GetEmails failed with legacy timestamps: %v", err)
+	}
+	if total != 2 || len(emails) != 2 {
+		t.Fatalf("Expected 2 emails, got total=%d, len=%d", total, len(emails))
+	}
+
+	// Check dates are parsed
+	for _, em := range emails {
+		if em.Date.IsZero() {
+			t.Errorf("Expected non-zero Date for email %s", em.ID)
+		}
+	}
+
+	// 2. Test GetEmailByID
+	em1, err := storage.GetEmailByID(userID, "msg-legacy-1")
+	if err != nil {
+		t.Fatalf("GetEmailByID failed: %v", err)
+	}
+	if em1 == nil {
+		t.Fatal("Expected email msg-legacy-1, got nil")
+	}
+	expectedDate1 := time.Date(2009, 8, 1, 16, 1, 23, 0, time.FixedZone("", -7*3600))
+	if !em1.Date.Equal(expectedDate1) {
+		t.Errorf("Expected Date %v, got %v", expectedDate1, em1.Date)
 	}
 }

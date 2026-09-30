@@ -1,12 +1,13 @@
 # Gmail DeepClean
 
-A local-first tool for analyzing and cleaning your Gmail inbox using the official Gmail API with strictly **read-only** permissions.
+A local-first tool for analyzing and cleaning your Gmail inbox using high-performance IMAP envelope streaming with Gmail REST API fallback, strictly executed in **read-only** mode.
 
 ## Features
 
-- **Strictly Read-Only**: Requests only `https://www.googleapis.com/auth/gmail.readonly`—never modifies, deletes, or sends emails.
+- **Strictly Read-Only Execution**: The app never modifies, deletes, or sends emails. Folders are opened in read-only mode via IMAP `EXAMINE`, and all application logic is strictly analytical.
+- **High-Performance Scanning**: Rapidly indexes inbox metadata via IMAP XOAUTH2 streaming with automatic fallback to the official Gmail REST API.
 - **Inbox Analytics**: Identifies high-volume senders, contacts who send emails you never reply to, and detailed interaction metrics.
-- **Local & Private**: All data and OAuth tokens are stored in a local SQLite database (`data/deepclean.db`).
+- **Local & Private**: All data and OAuth tokens are stored in a local SQLite database (`data/deepclean.db`). Binds to `127.0.0.1` by default.
 - **Secure Session Management**: Server-side token storage, automated token refresh, and CSRF protection.
 
 ---
@@ -36,7 +37,17 @@ REDIRECT_URL=http://localhost:8080/auth/gmail/callback
 PORT=8080
 ```
 
-> For step-by-step instructions on setting up Google Cloud Console credentials, see [docs/oauth.md](docs/oauth.md).
+
+### OAuth Permissions & Security
+
+To support high-speed mailbox scanning via IMAP (`imap.gmail.com`), Google requires the `https://mail.google.com/` scope for XOAUTH2 authentication (Google does not support `gmail.readonly` over IMAP).
+
+To guarantee safety:
+1. **Protocol-Level Read-Only**: The IMAP client opens mailboxes with the IMAP `EXAMINE` command (`readOnly: true`), ensuring the server rejects any attempt to modify or delete messages or flags.
+2. **Zero Modification Code**: The codebase contains strictly zero code paths for deleting, altering, moving, or sending messages.
+3. **Local-First Isolation**: The server binds to local loopback (`127.0.0.1`) by default, and tokens remain exclusively in your local SQLite database.
+
+For detailed setup instructions and scope details, see [docs/oauth.md](docs/oauth.md).
 
 ### 3. Development (Live Reload)
 

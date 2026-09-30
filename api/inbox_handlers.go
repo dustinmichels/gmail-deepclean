@@ -7,12 +7,7 @@ import (
 )
 
 // HandleStartProcessingInbox initiates or resumes inbox scanning
-func HandleStartProcessingInbox(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleStartProcessingInbox(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	reset := r.URL.Query().Get("reset") == "true"
 
@@ -32,12 +27,7 @@ func HandleStartProcessingInbox(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandlePauseProcessingInbox stops the inbox scanning
-func HandlePauseProcessingInbox(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandlePauseProcessingInbox(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	processor, exists := Registry.Get(sess.UserID)
 	if exists {
@@ -70,12 +60,7 @@ func HandlePauseProcessingInbox(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetInboxStatus returns the current processing status
-func HandleGetInboxStatus(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleGetInboxStatus(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	processor, exists := Registry.Get(sess.UserID)
 	if exists {
@@ -104,12 +89,7 @@ func HandleGetInboxStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetContacts returns contact statistics with filtering, searching, and sorting
-func HandleGetContacts(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleGetContacts(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	query := r.URL.Query()
 	filter := query.Get("filter") // "all", "never_emailed", "emailed"
@@ -147,12 +127,7 @@ func HandleGetContacts(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetTopSenders returns top senders (convenience endpoint)
-func HandleGetTopSenders(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleGetTopSenders(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	contacts, _, err := DB.GetContactStats(sess.UserID, "all", "", "received_count", "desc", 20, 0)
 	if err != nil {
@@ -165,12 +140,7 @@ func HandleGetTopSenders(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetEmailStats returns aggregated metrics
-func HandleGetEmailStats(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleGetEmailStats(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	stats, err := DB.GetOverallStats(sess.UserID)
 	if err != nil {

@@ -18,6 +18,7 @@ export function useScan(authHeaders: () => Record<string, string>) {
     uniqueSenders: 0,
     neverEmailedCount: 0,
     totalSizeBytes: 0,
+    localDbSizeBytes: 0,
   })
 
   const isScanning = computed(() => progress.value.isProcessing)

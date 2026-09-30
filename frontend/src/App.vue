@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { watch } from 'vue'
 import {
-  AlertTriangle,
-  Check,
   Lock,
   LogIn,
   LogOut,
   MailCheck,
-  RotateCcw,
   ShieldCheck,
   User,
 } from 'lucide-vue'
@@ -38,12 +35,14 @@ const {
   contactsSearch,
   contactsSort,
   contactsLoading,
+  contactsError,
   emails,
   totalEmails,
   selectedSender,
   emailsFilter,
   emailsSearch,
   emailsLoading,
+  emailsError,
   fetchContacts,
   fetchEmails,
   loadMoreEmails,
@@ -76,27 +75,7 @@ watch(
   }
 )
 
-const isFilteringNeverEmailed = computed(
-  () => contactsFilter.value === 'never_emailed' && emailsFilter.value === 'never_emailed'
-)
 
-const focusNeverEmailed = () => {
-  contactsFilter.value = 'never_emailed'
-  emailsFilter.value = 'never_emailed'
-}
-
-const resetAllFilters = () => {
-  contactsFilter.value = 'all'
-  emailsFilter.value = 'all'
-  clearSenderFilter()
-}
-
-const handleSelectTab = (tab: string) => {
-  contactsFilter.value = tab
-  if (tab === 'never_emailed') {
-    emailsFilter.value = 'never_emailed'
-  }
-}
 
 const handleSelectSender = (senderEmail: string) => {
   filterBySender(senderEmail)
@@ -164,56 +143,6 @@ const handleSelectSender = (senderEmail: string) => {
 
     <!-- Main Dashboard When Authenticated -->
     <main v-else class="main-content">
-      <!-- One-Way Senders Spotlight Banner (When found) -->
-      <section v-if="stats.neverEmailedCount > 0" class="spotlight-banner">
-        <div class="spotlight-header">
-          <span class="spotlight-pill">
-            <AlertTriangle :size="12" />
-            Primary Insight
-          </span>
-          <span class="spotlight-stat"
-            >{{ stats.neverEmailedCount.toLocaleString() }} One-Way Senders</span
-          >
-        </div>
-        <div class="spotlight-content">
-          <div class="spotlight-text">
-            <h3>People who send you email, who you never email</h3>
-            <p>
-              You have <strong>{{ stats.neverEmailedCount.toLocaleString() }}</strong> contacts who
-              have sent you messages without a reciprocal email from you.
-              <span v-if="stats.uniqueSenders > 0">
-                That represents
-                <strong
-                  >{{ Math.round((stats.neverEmailedCount / stats.uniqueSenders) * 100) }}%</strong
-                >
-                of all unique senders in your account.</span
-              >
-            </p>
-          </div>
-          <div class="spotlight-actions">
-            <button
-              @click="focusNeverEmailed"
-              class="btn-spotlight"
-              :class="{ active: isFilteringNeverEmailed }"
-            >
-              <Check v-if="isFilteringNeverEmailed" :size="15" />
-              <span>{{
-                isFilteringNeverEmailed
-                  ? 'Showing One-Way Senders'
-                  : 'Filter View to One-Way Senders'
-              }}</span>
-            </button>
-            <button
-              v-if="isFilteringNeverEmailed"
-              @click="resetAllFilters"
-              class="btn-spotlight-reset"
-            >
-              <RotateCcw :size="13" />
-              Reset Filters
-            </button>
-          </div>
-        </div>
-      </section>
 
       <!-- Dashboard & Scan Controls (with Progress Bar) -->
       <ScanDashboard
@@ -222,7 +151,6 @@ const handleSelectSender = (senderEmail: string) => {
         :is-scanning="isScanning"
         @start-scan="startScan"
         @pause-scan="pauseScan"
-        @select-tab="handleSelectTab"
       />
 
       <!-- Sender Breakdown & Analysis Table -->
@@ -230,6 +158,7 @@ const handleSelectSender = (senderEmail: string) => {
         :contacts="contacts"
         :total="totalContacts"
         :loading="contactsLoading"
+        :error="contactsError"
         :active-filter="contactsFilter"
         :search-query="contactsSearch"
         :sort-field="contactsSort"
@@ -240,6 +169,7 @@ const handleSelectSender = (senderEmail: string) => {
         @update:sort="contactsSort = $event"
         @select-sender="handleSelectSender"
         @export-csv="exportContactsCSV"
+        @retry="fetchContacts"
       />
 
       <!-- Detailed Emails List with Compact Previews -->
@@ -248,9 +178,11 @@ const handleSelectSender = (senderEmail: string) => {
           :emails="emails"
           :total="totalEmails"
           :loading="emailsLoading"
+          :error="emailsError"
           :selected-sender="selectedSender"
           :search-query="emailsSearch"
           :filter-mode="emailsFilter"
+          @retry="fetchEmails(false)"
           @clear-sender="clearSenderFilter"
           @update:search="emailsSearch = $event"
           @update:filter-mode="emailsFilter = $event"
@@ -335,116 +267,6 @@ const handleSelectSender = (senderEmail: string) => {
   font-weight: 600;
   padding: 0.35rem 0.75rem;
   border-radius: 20px;
-}
-
-/* Spotlight Banner for One-Way Senders */
-.spotlight-banner {
-  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-  border: 2px solid #fde68a;
-  border-radius: var(--radius-md, 10px);
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.5rem;
-  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.spotlight-header {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.spotlight-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  background: #d97706;
-  color: #ffffff;
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-}
-
-.spotlight-stat {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: #92400e;
-}
-
-.spotlight-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.spotlight-text h3 {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: #78350f;
-  margin: 0 0 0.25rem 0;
-}
-
-.spotlight-text p {
-  font-size: 0.875rem;
-  color: #92400e;
-  margin: 0;
-  line-height: 1.4;
-}
-
-.spotlight-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-spotlight {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  background: #d97706;
-  color: #ffffff;
-  border: none;
-  font-size: 0.875rem;
-  font-weight: 700;
-  padding: 0.55rem 1.1rem;
-  border-radius: var(--radius-sm, 6px);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  box-shadow: 0 2px 4px rgba(217, 119, 6, 0.2);
-}
-
-.btn-spotlight:hover {
-  background: #b45309;
-}
-
-.btn-spotlight.active {
-  background: #92400e;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.btn-spotlight-reset {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  background: transparent;
-  border: 1px solid #d97706;
-  color: #92400e;
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 0.5rem 0.85rem;
-  border-radius: var(--radius-sm, 6px);
-  cursor: pointer;
-}
-
-.btn-spotlight-reset:hover {
-  background: #fde68a;
 }
 
 /* Auth Card */

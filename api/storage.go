@@ -46,6 +46,7 @@ type OverallStats struct {
 	UniqueSenders        int   `json:"uniqueSenders"`
 	NeverEmailedCount    int   `json:"neverEmailedCount"`
 	TotalSizeBytes       int64 `json:"totalSizeBytes"`
+	LocalDbSizeBytes     int64 `json:"localDbSizeBytes"`
 }
 
 // ScanState tracks background scanning state across restarts
@@ -62,8 +63,9 @@ type ScanState struct {
 
 // Storage manages persistent SQLite storage
 type Storage struct {
-	db *sql.DB
-	mu sync.Mutex
+	db     *sql.DB
+	dbPath string
+	mu     sync.Mutex
 }
 
 var DB *Storage
@@ -89,7 +91,7 @@ func InitDB(dbPath string) (*Storage, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed setting sqlite pragmas: %w", err)
 	}
-	s := &Storage{db: db}
+	s := &Storage{db: db, dbPath: dbPath}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migration failed: %w", err)
@@ -182,6 +184,51 @@ func (s *Storage) migrate() error {
 		}
 	}
 	return nil
+}
+func parseDBTime(val interface{}, fieldName, identifier string) (*time.Time, error) {
+	if val == nil {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case time.Time:
+		return &v, nil
+	case *time.Time:
+		return v, nil
+	case []byte:
+		return parseDBTimeString(string(v), fieldName, identifier)
+	case string:
+		return parseDBTimeString(v, fieldName, identifier)
+	default:
+		return nil, fmt.Errorf("unexpected type %T for timestamp field %s (%s)", val, fieldName, identifier)
+	}
+}
+
+func parseDBTimeString(v, fieldName, identifier string) (*time.Time, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, nil
+	}
+	if idx := strings.Index(v, " m="); idx != -1 {
+		v = v[:idx]
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05.999999999 -0700 -0700",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05 -0700 -0700",
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	}
+	for _, l := range layouts {
+		if t, err := time.Parse(l, v); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("unable to parse timestamp %q for field %s (%s)", v, fieldName, identifier)
 }
 
 // Close closes the database connection
@@ -339,9 +386,10 @@ func (s *Storage) GetScanState(userID string) (*ScanState, error) {
 	defer s.mu.Unlock()
 
 	var (
-		state         ScanState
-		isProcInt     int
-		lastScannedAt sql.NullTime
+		state          ScanState
+		isProcInt      int
+		lastScannedRaw interface{}
+		updatedAtRaw   interface{}
 	)
 
 	err := s.db.QueryRow(`
@@ -355,8 +403,8 @@ func (s *Storage) GetScanState(userID string) (*ScanState, error) {
 		&state.EstimatedTotal,
 		&state.NextPageToken,
 		&state.StatusMessage,
-		&lastScannedAt,
-		&state.UpdatedAt,
+		&lastScannedRaw,
+		&updatedAtRaw,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -372,13 +420,21 @@ func (s *Storage) GetScanState(userID string) (*ScanState, error) {
 	}
 
 	state.IsProcessing = isProcInt == 1
-	if lastScannedAt.Valid {
-		state.LastScannedAt = &lastScannedAt.Time
+	var parseErr error
+	state.LastScannedAt, parseErr = parseDBTime(lastScannedRaw, "last_scanned_at", userID)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	parsedUpdatedAt, parseErr := parseDBTime(updatedAtRaw, "updated_at", userID)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if parsedUpdatedAt != nil {
+		state.UpdatedAt = *parsedUpdatedAt
 	}
 
 	return &state, nil
 }
-
 func (s *Storage) SaveScanState(state *ScanState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -490,6 +546,7 @@ func (s *Storage) SaveEmailsBatch(userID string, emails []EmailMetadata) error {
 					continue
 				}
 
+				formattedDate := em.Date.UTC().Format("2006-01-02 15:04:05")
 				_, err := tx.Exec(`
 					INSERT INTO contact_stats (user_id, email, name, sent_count, first_sent, last_sent)
 					VALUES (?, ?, '', 1, ?, ?)
@@ -497,7 +554,7 @@ func (s *Storage) SaveEmailsBatch(userID string, emails []EmailMetadata) error {
 						sent_count = contact_stats.sent_count + 1,
 						first_sent = CASE WHEN contact_stats.first_sent IS NULL OR excluded.first_sent < contact_stats.first_sent THEN excluded.first_sent ELSE contact_stats.first_sent END,
 						last_sent = CASE WHEN contact_stats.last_sent IS NULL OR excluded.last_sent > contact_stats.last_sent THEN excluded.last_sent ELSE contact_stats.last_sent END
-				`, userID, cleanTo, em.Date, em.Date)
+				`, userID, cleanTo, formattedDate, formattedDate)
 				if err != nil {
 					return fmt.Errorf("failed updating contact stats for to %s: %w", cleanTo, err)
 				}
@@ -506,6 +563,7 @@ func (s *Storage) SaveEmailsBatch(userID string, emails []EmailMetadata) error {
 			// Received email from em.From
 			cleanFrom := strings.ToLower(strings.TrimSpace(em.From))
 			if cleanFrom != "" {
+				formattedDate := em.Date.UTC().Format("2006-01-02 15:04:05")
 				_, err := tx.Exec(`
 					INSERT INTO contact_stats (
 						user_id, email, name, received_count, total_size, first_received, last_received
@@ -517,7 +575,7 @@ func (s *Storage) SaveEmailsBatch(userID string, emails []EmailMetadata) error {
 						name = CASE WHEN contact_stats.name = '' AND excluded.name != '' THEN excluded.name ELSE contact_stats.name END,
 						first_received = CASE WHEN contact_stats.first_received IS NULL OR excluded.first_received < contact_stats.first_received THEN excluded.first_received ELSE contact_stats.first_received END,
 						last_received = CASE WHEN contact_stats.last_received IS NULL OR excluded.last_received > contact_stats.last_received THEN excluded.last_received ELSE contact_stats.last_received END
-				`, userID, cleanFrom, em.FromName, em.SizeEstimate, em.Date, em.Date)
+				`, userID, cleanFrom, em.FromName, em.SizeEstimate, formattedDate, formattedDate)
 				if err != nil {
 					return fmt.Errorf("failed updating contact stats for from %s: %w", cleanFrom, err)
 				}
@@ -612,11 +670,11 @@ func (s *Storage) GetContactStats(
 	var results []ContactStat
 	for rows.Next() {
 		var (
-			cs            ContactStat
-			firstReceived sql.NullTime
-			lastReceived  sql.NullTime
-			firstSent     sql.NullTime
-			lastSent      sql.NullTime
+			cs               ContactStat
+			firstReceivedRaw interface{}
+			lastReceivedRaw  interface{}
+			firstSentRaw     interface{}
+			lastSentRaw      interface{}
 		)
 
 		err := rows.Scan(
@@ -625,26 +683,27 @@ func (s *Storage) GetContactStats(
 			&cs.ReceivedCount,
 			&cs.SentCount,
 			&cs.TotalSize,
-			&firstReceived,
-			&lastReceived,
-			&firstSent,
-			&lastSent,
+			&firstReceivedRaw,
+			&lastReceivedRaw,
+			&firstSentRaw,
+			&lastSentRaw,
 		)
 		if err != nil {
 			return nil, 0, err
 		}
 
-		if firstReceived.Valid {
-			cs.FirstReceived = &firstReceived.Time
+		var parseErr error
+		if cs.FirstReceived, parseErr = parseDBTime(firstReceivedRaw, "first_received", cs.Email); parseErr != nil {
+			return nil, 0, parseErr
 		}
-		if lastReceived.Valid {
-			cs.LastReceived = &lastReceived.Time
+		if cs.LastReceived, parseErr = parseDBTime(lastReceivedRaw, "last_received", cs.Email); parseErr != nil {
+			return nil, 0, parseErr
 		}
-		if firstSent.Valid {
-			cs.FirstSent = &firstSent.Time
+		if cs.FirstSent, parseErr = parseDBTime(firstSentRaw, "first_sent", cs.Email); parseErr != nil {
+			return nil, 0, parseErr
 		}
-		if lastSent.Valid {
-			cs.LastSent = &lastSent.Time
+		if cs.LastSent, parseErr = parseDBTime(lastSentRaw, "last_sent", cs.Email); parseErr != nil {
+			return nil, 0, parseErr
 		}
 
 		cs.NeverEmailed = cs.ReceivedCount > 0 && cs.SentCount == 0
@@ -685,6 +744,17 @@ func (s *Storage) GetOverallStats(userID string) (*OverallStats, error) {
 	`, userID)
 	if err := row.Scan(&stats.UniqueSenders, &stats.NeverEmailedCount); err != nil {
 		return nil, err
+	}
+
+	// Measure local sqlite database size (main db, -wal, -shm)
+	if s.dbPath != "" {
+		var localSize int64
+		for _, ext := range []string{"", "-wal", "-shm"} {
+			if fi, err := os.Stat(s.dbPath + ext); err == nil {
+				localSize += fi.Size()
+			}
+		}
+		stats.LocalDbSizeBytes = localSize
 	}
 
 	return &stats, nil
@@ -762,6 +832,7 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 			fromName        sql.NullString
 			subject         sql.NullString
 			snippet         sql.NullString
+			dateRaw         interface{}
 			csSent          int
 			csRecv          int
 		)
@@ -774,7 +845,7 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 			&toAddressesJSON,
 			&subject,
 			&snippet,
-			&em.Date,
+			&dateRaw,
 			&em.SizeEstimate,
 			&labelIDsJSON,
 			&isSentInt,
@@ -783,6 +854,14 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 		)
 		if err != nil {
 			return nil, 0, err
+		}
+
+		parsedDate, err := parseDBTime(dateRaw, "date", em.ID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if parsedDate != nil {
+			em.Date = *parsedDate
 		}
 
 		em.FromName = fromName.String
@@ -814,6 +893,7 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 		fromName        sql.NullString
 		subject         sql.NullString
 		snippet         sql.NullString
+		dateRaw         interface{}
 		csSent          int
 		csRecv          int
 	)
@@ -833,7 +913,7 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 		&toAddressesJSON,
 		&subject,
 		&snippet,
-		&em.Date,
+		&dateRaw,
 		&em.SizeEstimate,
 		&labelIDsJSON,
 		&isSentInt,
@@ -845,6 +925,14 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 			return nil, nil
 		}
 		return nil, err
+	}
+
+	parsedDate, err := parseDBTime(dateRaw, "date", em.ID)
+	if err != nil {
+		return nil, err
+	}
+	if parsedDate != nil {
+		em.Date = *parsedDate
 	}
 
 	em.FromName = fromName.String

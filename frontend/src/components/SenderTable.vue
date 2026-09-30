@@ -13,17 +13,24 @@ import {
   UserX,
 } from 'lucide-vue-next'
 import type { ContactStat } from '../types'
+import ContactStatsChart from './ContactStatsChart.vue'
 
-const props = defineProps<{
-  contacts: ContactStat[]
-  total: number
-  loading: boolean
-  activeFilter: string
-  searchQuery: string
-  sortField: string
-  sortOrder: string
-  neverEmailedCount: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    contacts: ContactStat[]
+    total: number
+    loading: boolean
+    error?: string | null
+    activeFilter: string
+    searchQuery: string
+    sortField: string
+    sortOrder: string
+    neverEmailedCount: number
+  }>(),
+  {
+    error: null,
+  }
+)
 
 const emit = defineEmits<{
   (e: 'update:filter', filter: string): void
@@ -31,8 +38,8 @@ const emit = defineEmits<{
   (e: 'update:sort', sort: string): void
   (e: 'select-sender', email: string): void
   (e: 'export-csv'): void
+  (e: 'retry'): void
 }>()
-
 const copiedEmail = ref<string | null>(null)
 
 const copyToClipboard = async (email: string) => {
@@ -140,7 +147,7 @@ const formatDate = (dateStr?: string) => {
           >
             <option value="received_count">Most Received</option>
             <option value="sent_count">Most Sent</option>
-            <option value="total_size">Largest Size</option>
+            <option value="total_size">Largest Mailbox Space</option>
             <option value="last_received">Most Recent</option>
             <option value="email">Email Address</option>
           </select>
@@ -160,9 +167,16 @@ const formatDate = (dateStr?: string) => {
       </div>
     </div>
 
+    <!-- TanStack Chart: Emails Received vs Sent -->
+    <ContactStatsChart :contacts="contacts" :loading="loading" />
+
     <!-- Contacts Table -->
     <div class="table-container">
       <div v-if="loading" class="loading-state">Loading contacts...</div>
+      <div v-else-if="error" class="error-state">
+        <p class="error-message">{{ error }}</p>
+        <button @click="emit('retry')" class="btn-retry">Retry</button>
+      </div>
       <div v-else-if="contacts.length === 0" class="empty-state">
         <p>No contacts found matching the selected filter.</p>
       </div>
@@ -172,7 +186,9 @@ const formatDate = (dateStr?: string) => {
             <th>Contact / Sender</th>
             <th>Received</th>
             <th>Sent Back</th>
-            <th>Total Size</th>
+            <th title="Total space occupied in your Gmail mailbox by messages from this sender">
+              Mailbox Size
+            </th>
             <th>Last Received</th>
             <th>Actions</th>
           </tr>
@@ -232,6 +248,35 @@ const formatDate = (dateStr?: string) => {
 </template>
 
 <style scoped>
+.error-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #dc2626;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.error-message {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.btn-retry {
+  background: #ffffff;
+  border: 1px solid #dc2626;
+  color: #dc2626;
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-retry:hover {
+  background: #fef2f2;
+}
 .sender-section {
   background: var(--color-surface, #ffffff);
   border: 1px solid var(--color-border, #e2e8f0);

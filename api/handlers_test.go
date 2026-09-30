@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"golang.org/x/oauth2"
 )
 
@@ -24,6 +25,7 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		AccessToken: "mock-token",
 		Expiry:      time.Now().Add(1 * time.Hour),
 	}, 24*time.Hour)
+	router := NewRouter("")
 
 	// Populate some sample emails
 	_ = DB.SaveEmailsBatch(userID, []EmailMetadata{
@@ -45,7 +47,7 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 	{
 		req := httptest.NewRequest("GET", "/api/auth/me", nil)
 		rec := httptest.NewRecorder()
-		HandleGetMe(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("Expected 401 Unauthorized without auth header, got %d", rec.Code)
@@ -57,7 +59,7 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/auth/me", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		rec := httptest.NewRecorder()
-		HandleGetMe(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", rec.Code)
@@ -77,7 +79,7 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/emails?limit=10", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		rec := httptest.NewRecorder()
-		HandleGetEmails(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", rec.Code)
@@ -95,9 +97,8 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 	{
 		req := httptest.NewRequest("GET", "/api/emails/test-msg-1", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
-		req = mux.SetURLVars(req, map[string]string{"id": "test-msg-1"})
 		rec := httptest.NewRecorder()
-		HandleGetEmailByID(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", rec.Code)
@@ -109,13 +110,24 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 			t.Errorf("Unexpected email details: %+v", email)
 		}
 	}
+	// 4b. Test method not allowed via ServeMux method routing
+	{
+		req := httptest.NewRequest("POST", "/api/emails", nil)
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected 405 Method Not Allowed, got %d", rec.Code)
+		}
+	}
 
 	// 5. Test /api/inbox/stats
 	{
 		req := httptest.NewRequest("GET", "/api/inbox/stats", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		rec := httptest.NewRecorder()
-		HandleGetEmailStats(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", rec.Code)
@@ -133,7 +145,7 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/inbox/contacts?filter=never_emailed", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		rec := httptest.NewRecorder()
-		HandleGetContacts(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", rec.Code)
@@ -152,7 +164,7 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/auth/logout", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		rec := httptest.NewRecorder()
-		HandleLogout(rec, req)
+		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected 200 OK on logout, got %d", rec.Code)
@@ -162,10 +174,142 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		reqMe := httptest.NewRequest("GET", "/api/auth/me", nil)
 		reqMe.Header.Set("Authorization", "Bearer "+sessionToken)
 		recMe := httptest.NewRecorder()
-		HandleGetMe(recMe, reqMe)
+		router.ServeHTTP(recMe, reqMe)
 
 		if recMe.Code != http.StatusUnauthorized {
 			t.Errorf("Expected 401 after logout, got %d", recMe.Code)
+		}
+	}
+}
+
+func TestSPAFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexContent := "<html><body>SPA App</body></html>"
+	if err := os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte(indexContent), 0644); err != nil {
+		t.Fatalf("Failed to write index.html: %v", err)
+	}
+
+	router := NewRouter(tmpDir)
+
+	// Unknown client-side route should fall back to index.html
+	req := httptest.NewRequest("GET", "/dashboard/settings", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200 OK for SPA fallback, got %d", rec.Code)
+	}
+	if rec.Body.String() != indexContent {
+		t.Errorf("Expected index.html content, got %s", rec.Body.String())
+	}
+
+	// Unknown /api/* route should return 404, not index.html
+	{
+		req := httptest.NewRequest("GET", "/api/unknown-endpoint", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected 404 for unknown API route, got %d", rec.Code)
+		}
+	}
+
+	// Unknown /auth/* route should return 404, not index.html
+	{
+		req := httptest.NewRequest("GET", "/auth/unknown-endpoint", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected 404 for unknown auth route, got %d", rec.Code)
+		}
+	}
+}
+func TestGetEmailsWithPlusAddressAndLegacyTimestamp(t *testing.T) {
+	storage := setupTestDB(t)
+	DB = storage
+
+	userID := "user-plus-test@example.com"
+	sessionToken := "token-plus-test"
+
+	_ = DB.UpsertUser(userID, userID)
+	_ = DB.CreateSession(sessionToken, userID, userID, &oauth2.Token{
+		AccessToken: "mock-token",
+		Expiry:      time.Now().Add(1 * time.Hour),
+	}, 24*time.Hour)
+
+	router := NewRouter("")
+
+	// Insert email with + in address and legacy timestamp string directly into database
+	msgID := "msg-fb-plus-1"
+	senderAddr := "notification+pvl16c6f@facebookmail.com"
+	_, err := DB.db.Exec(`
+		INSERT INTO emails (
+			id, user_id, thread_id, from_address, from_name, to_addresses,
+			subject, snippet, date, size_estimate, label_ids, is_sent, created_at
+		) VALUES (
+			?, ?, 'th-fb-1', ?, 'Facebook', '["user-plus-test@example.com"]',
+			'Facebook Notification', 'You have a new alert',
+			'2009-08-01 16:01:23 -0700 -0700', 4096, '["INBOX"]', 0, '2026-09-29 12:00:00'
+		)
+	`, msgID, userID, senderAddr)
+	if err != nil {
+		t.Fatalf("Failed inserting test email: %v", err)
+	}
+
+	// 1. Test GET /api/emails?sender=notification%2Bpvl16c6f%40facebookmail.com
+	{
+		req := httptest.NewRequest("GET", "/api/emails?sender=notification%2Bpvl16c6f%40facebookmail.com", nil)
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected 200 OK for sender with plus, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("Failed to parse JSON response: %v", err)
+		}
+
+		total, _ := resp["total"].(float64)
+		if total != 1 {
+			t.Errorf("Expected total=1 email from plus sender, got %v", total)
+		}
+
+		emailsList, ok := resp["emails"].([]interface{})
+		if !ok || len(emailsList) != 1 {
+			t.Fatalf("Expected 1 email in list, got %v", emailsList)
+		}
+
+		emMap := emailsList[0].(map[string]interface{})
+		if emMap["from"] != senderAddr {
+			t.Errorf("Expected from %q, got %v", senderAddr, emMap["from"])
+		}
+		if emMap["date"] == nil || emMap["date"] == "" {
+			t.Errorf("Expected non-empty date, got %v", emMap["date"])
+		}
+	}
+
+	// 2. Test GET /api/emails/{id} detail route
+	{
+		req := httptest.NewRequest("GET", "/api/emails/"+msgID, nil)
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected 200 OK for single email, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var em EmailMetadata
+		if err := json.Unmarshal(rec.Body.Bytes(), &em); err != nil {
+			t.Fatalf("Failed to parse single email JSON: %v", err)
+		}
+		if em.ID != msgID {
+			t.Errorf("Expected email ID %q, got %q", msgID, em.ID)
+		}
+		if em.Date.IsZero() {
+			t.Errorf("Expected non-zero parsed date on single email")
 		}
 	}
 }

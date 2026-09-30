@@ -4,17 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-
-	"github.com/gorilla/mux"
 )
 
 // HandleGetEmails retrieves emails with rich metadata, filtering, and pagination from persistent storage
-func HandleGetEmails(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleGetEmails(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	query := r.URL.Query()
 	sender := query.Get("sender")
@@ -51,15 +44,9 @@ func HandleGetEmails(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetEmailByID retrieves details for a single email message
-func HandleGetEmailByID(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+func HandleGetEmailByID(w http.ResponseWriter, r *http.Request, sess *Session) {
 
-	vars := mux.Vars(r)
-	messageID := vars["id"]
+	messageID := r.PathValue("id")
 	if messageID == "" {
 		http.Error(w, "Missing email ID", http.StatusBadRequest)
 		return

@@ -70,4 +70,34 @@ describe('SenderTable', () => {
 
     expect(wrapper.emitted('export-csv')).toBeTruthy()
   })
+
+  it('renders error state when error prop is passed and emits retry', async () => {
+    const wrapper = mount(SenderTable, {
+      props: {
+        ...defaultProps,
+        contacts: [],
+        error: 'Failed to fetch contacts from server',
+      },
+    })
+
+    expect(wrapper.text()).toContain('Failed to fetch contacts from server')
+    expect(wrapper.text()).not.toContain('No contacts found matching the selected filter.')
+    const retryBtn = wrapper.find('.btn-retry')
+    expect(retryBtn.exists()).toBe(true)
+    await retryBtn.trigger('click')
+    expect(wrapper.emitted('retry')).toBeTruthy()
+  })
+
+  it('renders genuine empty state when contacts list is empty and error is null', () => {
+    const wrapper = mount(SenderTable, {
+      props: {
+        ...defaultProps,
+        contacts: [],
+        error: null,
+      },
+    })
+
+    expect(wrapper.text()).toContain('No contacts found matching the selected filter.')
+    expect(wrapper.find('.error-state').exists()).toBe(false)
+  })
 })

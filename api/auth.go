@@ -220,14 +220,23 @@ func ParseSession(r *http.Request) (*Session, error) {
 	return sess, nil
 }
 
-// HandleGetMe returns details of the currently authenticated user
-func HandleGetMe(w http.ResponseWriter, r *http.Request) {
-	sess, err := ParseSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
+// AuthenticatedHandler is an HTTP handler that receives the verified Session.
+type AuthenticatedHandler func(w http.ResponseWriter, r *http.Request, sess *Session)
 
+// RequireAuth wraps an AuthenticatedHandler, enforcing authentication and passing the verified session.
+func RequireAuth(next AuthenticatedHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, err := ParseSession(r)
+		if err != nil {
+			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+		next(w, r, sess)
+	}
+}
+
+// HandleGetMe returns details of the currently authenticated user
+func HandleGetMe(w http.ResponseWriter, r *http.Request, sess *Session) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"authenticated": true,

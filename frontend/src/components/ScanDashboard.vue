@@ -2,16 +2,15 @@
 import { computed } from 'vue'
 import {
   ArrowDown,
-  ArrowRight,
   ArrowUp,
   Clock,
-  HardDrive,
+  Cloud,
+  Database,
   Mail,
   Pause,
   Play,
   RotateCw,
   Users,
-  UserX,
 } from 'lucide-vue-next'
 import type { OverallStats, ScanProgress } from '../types'
 
@@ -24,7 +23,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'start-scan', reset: boolean): void
   (e: 'pause-scan'): void
-  (e: 'select-tab', tab: string): void
 }>()
 
 const formatBytes = (bytes: number) => {
@@ -49,39 +47,12 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, pct))
 })
 
-const neverEmailedPercent = computed(() => {
-  if (!props.stats.uniqueSenders || props.stats.uniqueSenders === 0) return 0
-  return Math.round((props.stats.neverEmailedCount / props.stats.uniqueSenders) * 100)
-})
 </script>
 
 <template>
   <div class="dashboard-panel">
     <!-- Stat Cards -->
     <div class="stats-grid">
-      <!-- High-Priority: Highlighted One-Way Senders Card -->
-      <div
-        class="stat-card highlight-card"
-        @click="emit('select-tab', 'never_emailed')"
-        title="Click to view senders you have never emailed back"
-      >
-        <div class="stat-header-row">
-          <div class="stat-label-group">
-            <UserX :size="16" class="stat-card-icon warning-icon" />
-            <span class="stat-label">Never Emailed Back</span>
-          </div>
-          <span class="alert-pill">Key Focus</span>
-        </div>
-        <div class="stat-value warning-text">{{ stats.neverEmailedCount.toLocaleString() }}</div>
-        <div class="stat-sub warning-sub">
-          <span>{{ neverEmailedPercent }}% of senders</span>
-          <span class="view-link">
-            <span>View all</span>
-            <ArrowRight :size="13" />
-          </span>
-        </div>
-      </div>
-
       <div class="stat-card">
         <div class="stat-header-row">
           <div class="stat-label-group">
@@ -113,15 +84,41 @@ const neverEmailedPercent = computed(() => {
         <div class="stat-sub">Distinct contacts analyzed</div>
       </div>
 
-      <div class="stat-card">
+      <div
+        class="stat-card"
+        title="Estimated space occupied by analyzed emails in your Gmail account. DeepClean only stores metadata locally in SQLite without downloading message bodies or attachments."
+      >
         <div class="stat-header-row">
           <div class="stat-label-group">
-            <HardDrive :size="16" class="stat-card-icon" />
-            <span class="stat-label">Total Size</span>
+            <Cloud :size="16" class="stat-card-icon cloud-icon" />
+            <span class="stat-label">Gmail Space Analyzed</span>
           </div>
+          <span class="storage-scope-pill" title="Size of analyzed messages on Gmail cloud servers">
+            Cloud
+          </span>
         </div>
         <div class="stat-value">{{ formatBytes(stats.totalSizeBytes) }}</div>
-        <div class="stat-sub">Estimated space analyzed</div>
+        <div class="stat-sub storage-sub-container">
+          <span class="stat-sub-item">In Gmail mailbox</span>
+          <span
+            v-if="stats.localDbSizeBytes && stats.localDbSizeBytes > 0"
+            class="stat-sub-item local-db-badge"
+            title="Local SQLite database footprint on disk (stores metadata only, no email bodies or attachments)"
+          >
+            <Database :size="12" class="db-badge-icon" />
+            <span
+              >Local DB: <strong>{{ formatBytes(stats.localDbSizeBytes) }}</strong></span
+            >
+          </span>
+          <span
+            v-else
+            class="stat-sub-item local-db-badge"
+            title="DeepClean stores lightweight metadata in a local SQLite database (no email bodies or attachments)"
+          >
+            <Database :size="12" class="db-badge-icon" />
+            <span>Local DB: Metadata only</span>
+          </span>
+        </div>
       </div>
     </div>
 
@@ -203,6 +200,10 @@ const neverEmailedPercent = computed(() => {
             :style="{ width: isScanning ? '100%' : '100%' }"
           ></div>
         </div>
+
+        <div class="scan-storage-hint">
+          <span>Metadata-only scan: email bodies and attachments remain in Gmail.</span>
+        </div>
       </div>
     </div>
   </div>
@@ -253,10 +254,6 @@ const neverEmailedPercent = computed(() => {
   flex-shrink: 0;
 }
 
-.stat-card-icon.warning-icon {
-  color: #d97706;
-}
-
 .stat-label {
   font-size: 0.8rem;
   font-weight: 600;
@@ -281,51 +278,6 @@ const neverEmailedPercent = computed(() => {
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
-}
-
-/* Highlighting the One-Way Senders Card */
-.highlight-card {
-  background: #fffbeb;
-  border: 2px solid #fde68a;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-}
-
-.highlight-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 14px rgba(217, 119, 6, 0.15);
-  border-color: #f59e0b;
-}
-
-.alert-pill {
-  background: #fef3c7;
-  color: #b45309;
-  border: 1px solid #fde68a;
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-}
-
-.warning-text {
-  color: #d97706;
-}
-
-.warning-sub {
-  color: #92400e;
-  font-weight: 600;
-}
-
-.view-link {
-  color: #b45309;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
 }
 
 .stat-sub-item {
@@ -529,5 +481,60 @@ const neverEmailedPercent = computed(() => {
   100% {
     background-position: -200% 0;
   }
+}
+
+.stat-card-icon.cloud-icon {
+  color: #0284c7;
+}
+
+.storage-scope-pill {
+  background: #f0f9ff;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+.storage-sub-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.local-db-badge {
+  background: var(--color-surface-hover, #f1f5f9);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--color-text-muted, #475569);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.local-db-badge strong {
+  color: var(--color-text-main, #0f172a);
+}
+
+.db-badge-icon {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.scan-storage-hint {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-faint, #94a3b8);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 </style>

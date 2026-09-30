@@ -56,6 +56,7 @@ type InboxProcessor struct {
 	concurrency    int
 	rateLimiter    *time.Ticker
 	estimatedTotal int64
+	scanWg         sync.WaitGroup
 }
 
 // Global registry of active processors per user
@@ -94,6 +95,42 @@ func (r *ProcessorRegistry) Get(userID string) (*InboxProcessor, bool) {
 	return proc, exists
 }
 
+// PauseAll signals cancellation to all active processors and waits for their background workers to exit.
+func (r *ProcessorRegistry) PauseAll(ctx context.Context) error {
+	r.mu.RLock()
+	procs := make([]*InboxProcessor, 0, len(r.processors))
+	for _, proc := range r.processors {
+		procs = append(procs, proc)
+	}
+	r.mu.RUnlock()
+
+	for _, proc := range procs {
+		_ = proc.PauseProcessing()
+	}
+
+	var wg sync.WaitGroup
+	for _, proc := range procs {
+		wg.Add(1)
+		go func(p *InboxProcessor) {
+			defer wg.Done()
+			p.scanWg.Wait()
+		}(proc)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // NewInboxProcessor initializes a processor with DB-backed state and rate limiting
 func NewInboxProcessor(userID, userEmail string, token *oauth2.Token) (*InboxProcessor, error) {
 	ctx := context.Background()
@@ -122,7 +159,7 @@ func NewInboxProcessor(userID, userEmail string, token *oauth2.Token) (*InboxPro
 		oauthToken:     token,
 		service:        service,
 		scanState:      state,
-		concurrency:    5,                                     // Bounded worker pool: 5 concurrent workers
+		concurrency:    5,                                      // Bounded worker pool: 5 concurrent workers
 		rateLimiter:    time.NewTicker(200 * time.Millisecond), // 5 requests/sec = 100 quota units/sec (safe under 6,000 units/min per-user limit)
 		estimatedTotal: state.EstimatedTotal,
 	}, nil
@@ -153,7 +190,11 @@ func (p *InboxProcessor) StartProcessing(reset bool) error {
 	p.cancelFunc = cancel
 	p.mu.Unlock()
 
-	go p.runScan(ctx)
+	p.scanWg.Add(1)
+	go func() {
+		defer p.scanWg.Done()
+		p.runScan(ctx)
+	}()
 	return nil
 }
 

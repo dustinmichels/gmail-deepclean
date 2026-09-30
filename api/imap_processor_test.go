@@ -107,8 +107,8 @@ func TestConvertImapMessageToMetadata(t *testing.T) {
 		},
 	}
 	msg.Items = map[imap.FetchItem]interface{}{
-		imap.FetchItem("X-GM-MSGID"): uint64(0x123456789abcdef0),
-		imap.FetchItem("X-GM-THRID"): uint64(0xabcdef0123456789),
+		imap.FetchItem("X-GM-MSGID"):  uint64(0x123456789abcdef0),
+		imap.FetchItem("X-GM-THRID"):  uint64(0xabcdef0123456789),
 		imap.FetchItem("X-GM-LABELS"): []interface{}{"INBOX", "IMPORTANT"},
 	}
 

@@ -21,12 +21,14 @@ const props = withDefaults(
     emails: EmailMetadata[]
     total: number
     loading: boolean
+    error?: string | null
     selectedSender: string | null
     searchQuery: string
     filterMode?: 'all' | 'never_emailed'
   }>(),
   {
     filterMode: 'all',
+    error: null,
   }
 )
 
@@ -36,6 +38,7 @@ const emit = defineEmits<{
   (e: 'update:filter-mode', mode: 'all' | 'never_emailed'): void
   (e: 'select-sender', sender: string): void
   (e: 'load-more'): void
+  (e: 'retry'): void
 }>()
 
 const expandedEmails = ref<Record<string, boolean>>({})
@@ -148,7 +151,12 @@ const formatDate = (dateStr: string) => {
 
     <!-- Email List -->
     <div class="email-list">
-      <div v-if="loading && emails.length === 0" class="loading-state">
+      <div v-if="error" class="error-state">
+        <AlertTriangle :size="20" class="error-icon" />
+        <p class="error-message">{{ error }}</p>
+        <button @click="emit('retry')" class="btn-retry">Retry</button>
+      </div>
+      <div v-else-if="loading && emails.length === 0" class="loading-state">
         <Loader2 :size="18" class="spinner-icon" />
         <span>Loading emails...</span>
       </div>
@@ -205,7 +213,9 @@ const formatDate = (dateStr: string) => {
             </div>
 
             <div class="meta-right">
-              <span class="email-size">{{ formatBytes(email.sizeEstimate) }}</span>
+              <span class="email-size" title="Estimated message size on Gmail">{{
+                formatBytes(email.sizeEstimate)
+              }}</span>
               <span class="email-date">{{ formatDate(email.date) }}</span>
               <ChevronDown :size="15" class="chevron" :class="{ open: expandedEmails[email.id] }" />
             </div>
@@ -478,6 +488,39 @@ const formatDate = (dateStr: string) => {
 .empty-hint {
   font-size: 0.85rem;
   margin-top: 0.25rem;
+}
+.error-state {
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: #dc2626;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.error-icon {
+  color: #dc2626;
+}
+
+.error-message {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.btn-retry {
+  background: #ffffff;
+  border: 1px solid #dc2626;
+  color: #dc2626;
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-retry:hover {
+  background: #fef2f2;
 }
 
 /* Compact Email Card */

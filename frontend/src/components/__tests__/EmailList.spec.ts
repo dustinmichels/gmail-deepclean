@@ -125,4 +125,21 @@ describe('EmailList', () => {
     expect(wrapper.emitted('update:filter-mode')).toBeTruthy()
     expect(wrapper.emitted('update:filter-mode')![0]).toEqual(['never_emailed'])
   })
+  it('renders error state and emits retry when error prop is set', async () => {
+    const wrapper = mount(EmailList, {
+      props: {
+        ...defaultProps,
+        error: 'Failed to retrieve emails: internal server error',
+      },
+    })
+
+    expect(wrapper.find('.error-state').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Failed to retrieve emails: internal server error')
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
+
+    const retryBtn = wrapper.find('.error-state .btn-retry')
+    expect(retryBtn.exists()).toBe(true)
+    await retryBtn.trigger('click')
+    expect(wrapper.emitted('retry')).toBeTruthy()
+  })
 })

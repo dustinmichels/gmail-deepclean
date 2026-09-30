@@ -14,6 +14,9 @@
     "fmt": "oxfmt"
   },
   "dependencies": {
+    "@tanstack/charts": "^0.18.0",
+    "@tanstack/vue-charts": "^0.18.0",
+    "d3-scale": "^4.0.2",
     "lucide-vue": "npm:lucide-vue-next@^1.0.0",
     "lucide-vue-next": "^1.0.0",
     "vue": "^3.5.43"
@@ -21,6 +24,7 @@
   "devDependencies": {
     "@tsconfig/bun": "^1.0.11",
     "@types/bun": "^1.4.2",
+    "@types/d3-scale": "^4.0.9",
     "@vitejs/plugin-vue": "^6.0.9",
     "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.9.1",

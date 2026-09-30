@@ -9,7 +9,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const contactsSearch = ref<string>('')
   const contactsSort = ref<string>('received_count')
   const contactsLoading = ref(false)
-
+  const contactsError = ref<string | null>(null)
   // Emails State
   const emails = ref<EmailMetadata[]>([])
   const totalEmails = ref(0)
@@ -17,6 +17,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const emailsFilter = ref<'all' | 'never_emailed'>('all')
   const emailsSearch = ref<string>('')
   const emailsLoading = ref(false)
+  const emailsError = ref<string | null>(null)
   const emailsOffset = ref(0)
   const emailsLimit = 25
 
@@ -25,6 +26,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     if (!headers.Authorization) return
 
     contactsLoading.value = true
+    contactsError.value = null
     try {
       const params = new URLSearchParams({
         filter: contactsFilter.value,
@@ -40,9 +42,14 @@ export function useEmails(authHeaders: () => Record<string, string>) {
         const data: ContactsResponse = await res.json()
         contacts.value = data.contacts || []
         totalContacts.value = data.total || 0
+      } else {
+        const errText = await res.text()
+        contactsError.value = errText || `Failed to fetch contacts (HTTP ${res.status})`
       }
-    } catch (e) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Network error fetching contacts'
       console.error('Failed to fetch contacts:', e)
+      contactsError.value = message
     } finally {
       contactsLoading.value = false
     }
@@ -53,6 +60,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     if (!headers.Authorization) return
 
     emailsLoading.value = true
+    emailsError.value = null
     try {
       if (!append) {
         emailsOffset.value = 0
@@ -81,9 +89,14 @@ export function useEmails(authHeaders: () => Record<string, string>) {
           emails.value = data.emails || []
         }
         totalEmails.value = data.total || 0
+      } else {
+        const errText = await res.text()
+        emailsError.value = errText || `Failed to fetch emails (HTTP ${res.status})`
       }
-    } catch (e) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Network error fetching emails'
       console.error('Failed to fetch emails:', e)
+      emailsError.value = message
     } finally {
       emailsLoading.value = false
     }
@@ -98,6 +111,7 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const filterBySender = (senderEmail: string) => {
     selectedSender.value = senderEmail
     emailsSearch.value = ''
+    emailsFilter.value = 'all'
     fetchEmails(false)
   }
 
@@ -173,12 +187,14 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     contactsSearch,
     contactsSort,
     contactsLoading,
+    contactsError,
     emails,
     totalEmails,
     selectedSender,
     emailsFilter,
     emailsSearch,
     emailsLoading,
+    emailsError,
     fetchContacts,
     fetchEmails,
     loadMoreEmails,
