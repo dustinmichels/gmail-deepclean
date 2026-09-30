@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { watch } from 'vue'
-import {
-  Lock,
-  LogIn,
-  LogOut,
-  MailCheck,
-  ShieldCheck,
-  User,
-} from 'lucide-vue'
+import { Lock, LogIn, LogOut, MailCheck, ShieldCheck, User } from 'lucide-vue'
 import EmailList from './components/EmailList.vue'
 import ScanDashboard from './components/ScanDashboard.vue'
 import SenderTable from './components/SenderTable.vue'
@@ -75,8 +68,6 @@ watch(
   }
 )
 
-
-
 const handleSelectSender = (senderEmail: string) => {
   filterBySender(senderEmail)
   // Scroll to email list smoothly
@@ -143,7 +134,6 @@ const handleSelectSender = (senderEmail: string) => {
 
     <!-- Main Dashboard When Authenticated -->
     <main v-else class="main-content">
-
       <!-- Dashboard & Scan Controls (with Progress Bar) -->
       <ScanDashboard
         :progress="progress"

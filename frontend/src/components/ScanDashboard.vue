@@ -46,7 +46,6 @@ const progressPercent = computed(() => {
   const pct = Math.round((props.progress.totalEmails / props.progress.estimatedTotal) * 100)
   return Math.min(100, Math.max(0, pct))
 })
-
 </script>
 
 <template>

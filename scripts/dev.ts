@@ -332,8 +332,11 @@ function startFrontend() {
   });
 }
 
-async function streamOutput(stream: ReadableStream<Uint8Array> | null, source: "server" | "vite") {
-  if (!stream) return;
+async function streamOutput(
+  stream: ReadableStream<Uint8Array> | number | null | undefined,
+  source: "server" | "vite",
+) {
+  if (!stream || typeof stream === "number") return;
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

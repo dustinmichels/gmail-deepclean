@@ -69,7 +69,6 @@ describe('ScanDashboard', () => {
     expect(wrapper.emitted('pause-scan')).toBeTruthy()
   })
 
-
   it('renders progress bar and percentage when scanning with estimatedTotal', () => {
     const wrapper = mount(ScanDashboard, {
       props: {

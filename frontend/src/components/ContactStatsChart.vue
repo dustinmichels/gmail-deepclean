@@ -92,9 +92,7 @@ const chartDefinition = computed(() => {
       </div>
     </div>
 
-    <div v-if="loading" class="chart-status-message">
-      Loading chart data...
-    </div>
+    <div v-if="loading" class="chart-status-message">Loading chart data...</div>
     <div v-else-if="chartData.length === 0" class="chart-status-message">
       No contact data available to plot.
     </div>
