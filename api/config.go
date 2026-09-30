@@ -36,12 +36,15 @@ func Init() {
 		DBPath:       dbPath,
 	}
 
-	// Set up OAuth2 configuration - strictly READONLY
+	// Set up OAuth2 configuration
+	// Note: gmail.MailGoogleComScope is required for IMAP XOAUTH2 access.
+	// All application processing remains strictly read-only.
 	oauthConfig = &oauth2.Config{
 		ClientID:     config.ClientID,
 		ClientSecret: config.ClientSecret,
 		RedirectURL:  config.RedirectURL,
 		Scopes: []string{
+			gmail.MailGoogleComScope,
 			gmail.GmailReadonlyScope,
 		},
 		Endpoint: google.Endpoint,

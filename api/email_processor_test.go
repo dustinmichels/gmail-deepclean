@@ -102,8 +102,8 @@ func TestNewInboxProcessorConfiguration(t *testing.T) {
 		t.Fatalf("NewInboxProcessor failed: %v", err)
 	}
 
-	if proc.concurrency != 20 {
-		t.Errorf("Expected concurrency=20, got %d", proc.concurrency)
+	if proc.concurrency != 5 {
+		t.Errorf("Expected concurrency=5, got %d", proc.concurrency)
 	}
 	if proc.rateLimiter == nil {
 		t.Errorf("Expected non-nil rateLimiter")

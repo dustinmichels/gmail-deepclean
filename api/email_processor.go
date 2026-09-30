@@ -122,8 +122,8 @@ func NewInboxProcessor(userID, userEmail string, token *oauth2.Token) (*InboxPro
 		oauthToken:     token,
 		service:        service,
 		scanState:      state,
-		concurrency:    20,                                    // Bounded worker pool: 20 concurrent workers
-		rateLimiter:    time.NewTicker(25 * time.Millisecond), // Max 40 requests/sec (~200 units/sec, leaving quota headroom under 250 units/sec limit)
+		concurrency:    5,                                     // Bounded worker pool: 5 concurrent workers
+		rateLimiter:    time.NewTicker(200 * time.Millisecond), // 5 requests/sec = 100 quota units/sec (safe under 6,000 units/min per-user limit)
 		estimatedTotal: state.EstimatedTotal,
 	}, nil
 }
@@ -206,12 +206,27 @@ func (p *InboxProcessor) runScan(ctx context.Context) {
 		p.mu.Unlock()
 	}()
 
+	// Attempt fast IMAP XOAUTH2 scan first
+	imapErr := p.runImapScan(ctx)
+	if imapErr == nil {
+		log.Printf("[%s] IMAP scan completed successfully for %s", p.userID, p.userEmail)
+		return
+	}
+
+	// If cancelled or paused by context, do not continue
+	if ctx.Err() != nil {
+		log.Printf("[%s] Scan paused or cancelled by context", p.userID)
+		return
+	}
+
+	log.Printf("[%s] IMAP scan unavailable (%v). Falling back to Gmail REST API.", p.userID, imapErr)
+	errMsg := "IMAP unavailable, falling back to Gmail REST API..."
+	if strings.Contains(imapErr.Error(), "XOAUTH2") || strings.Contains(imapErr.Error(), "Invalid credentials") {
+		errMsg = "IMAP requires re-login (scope upgrade). Falling back to REST API..."
+	}
+	p.updateStatus(errMsg)
 	user := "me"
-	pageSize := int64(100)
-
-	log.Printf("[%s] Starting inbox scan for %s", p.userID, p.userEmail)
-
-	p.updateStatus("Connecting to Gmail...")
+	pageSize := int64(500)
 	if profile, err := p.service.Users.GetProfile(user).Context(ctx).Do(); err == nil && profile != nil {
 		p.mu.Lock()
 		p.estimatedTotal = profile.MessagesTotal
