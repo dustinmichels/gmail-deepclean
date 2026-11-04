@@ -4,7 +4,7 @@ import { useEmails } from '../useEmails'
 describe('useEmails composable', () => {
   const authHeaders = () => ({ Authorization: 'Bearer test-token' })
 
-  it('resets emailsFilter to "all" when filterBySender is called', async () => {
+  it('filterBySender fetches that sender with an encoded address and clears search', async () => {
     let capturedUrl = ''
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       capturedUrl = url
@@ -14,21 +14,15 @@ describe('useEmails composable', () => {
       })
     })
 
-    const { emailsFilter, selectedSender, filterBySender } = useEmails(authHeaders)
+    const { emailsSearch, selectedSender, filterBySender } = useEmails(authHeaders)
+    emailsSearch.value = 'invoice'
 
-    // Simulate user having one-way senders filter active
-    emailsFilter.value = 'never_emailed'
-    expect(emailsFilter.value).toBe('never_emailed')
-
-    // Click on a sender
     filterBySender('notification+pvl16c6f@facebookmail.com')
 
     expect(selectedSender.value).toBe('notification+pvl16c6f@facebookmail.com')
-    expect(emailsFilter.value).toBe('all')
-
-    // Verify fetch request does not retain filter=never_emailed
+    expect(emailsSearch.value).toBe('')
     expect(capturedUrl).toContain('sender=notification%2Bpvl16c6f%40facebookmail.com')
-    expect(capturedUrl).not.toContain('filter=never_emailed')
+    expect(capturedUrl).not.toContain('search=')
   })
 
   it('captures emailsError when fetchEmails returns non-ok response', async () => {

@@ -24,29 +24,48 @@ type Session struct {
 	ExpiresAt  time.Time     `json:"expiresAt"`
 }
 
-// ContactStat stores aggregated communication metrics with an email contact
+// ContactStat stores aggregated metrics for a sender the user has never emailed.
+// Anyone the user has sent mail to is a real contact and is never surfaced.
 type ContactStat struct {
 	Email         string     `json:"email"`
 	Name          string     `json:"name"`
 	ReceivedCount int        `json:"receivedCount"`
-	SentCount     int        `json:"sentCount"`
 	TotalSize     int64      `json:"totalSize"`
 	FirstReceived *time.Time `json:"firstReceived,omitempty"`
 	LastReceived  *time.Time `json:"lastReceived,omitempty"`
-	FirstSent     *time.Time `json:"firstSent,omitempty"`
-	LastSent      *time.Time `json:"lastSent,omitempty"`
-	NeverEmailed  bool       `json:"neverEmailed"`
 }
 
-// OverallStats contains high-level metrics for the user's inbox
+// OverallStats contains high-level metrics for the user's inbox.
+// Totals cover every scanned email; NeverEmailed* cover received mail from senders the user never emailed.
 type OverallStats struct {
-	TotalEmailsProcessed int   `json:"totalEmailsProcessed"`
-	TotalReceived        int   `json:"totalReceived"`
-	TotalSent            int   `json:"totalSent"`
-	UniqueSenders        int   `json:"uniqueSenders"`
-	NeverEmailedCount    int   `json:"neverEmailedCount"`
-	TotalSizeBytes       int64 `json:"totalSizeBytes"`
-	LocalDbSizeBytes     int64 `json:"localDbSizeBytes"`
+	TotalEmailsProcessed  int   `json:"totalEmailsProcessed"`
+	TotalReceived         int   `json:"totalReceived"`
+	TotalSent             int   `json:"totalSent"`
+	UniqueSenders         int   `json:"uniqueSenders"`
+	TotalSizeBytes        int64 `json:"totalSizeBytes"`
+	NeverEmailedSenders   int   `json:"neverEmailedSenders"`
+	NeverEmailedEmails    int   `json:"neverEmailedEmails"`
+	NeverEmailedSizeBytes int64 `json:"neverEmailedSizeBytes"`
+	LocalDbSizeBytes      int64 `json:"localDbSizeBytes"`
+	CandidateEmailsCount  int   `json:"candidateEmailsCount"`
+	CandidateSizeBytes    int64 `json:"candidateSizeBytes"`
+	CandidateSendersCount int   `json:"candidateSendersCount"`
+}
+
+// neverEmailedJoinSQL joins emails (alias e) to the sender's contact stats (alias cs).
+const neverEmailedJoinSQL = `JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address`
+
+// neverEmailedSQL restricts joined rows to received mail from senders the user has never emailed.
+const neverEmailedSQL = `e.is_sent = 0 AND cs.received_count > 0 AND cs.sent_count = 0`
+
+// CandidateSender represents a sender who has never been emailed back and has emails older than 1 month
+type CandidateSender struct {
+	Email          string     `json:"email"`
+	Name           string     `json:"name"`
+	CandidateCount int        `json:"candidateCount"`
+	CandidateSize  int64      `json:"candidateSize"`
+	OldestDate     *time.Time `json:"oldestDate,omitempty"`
+	NewestDate     *time.Time `json:"newestDate,omitempty"`
 }
 
 // ScanState tracks background scanning state across restarts
@@ -146,6 +165,8 @@ func (s *Storage) migrate() error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_emails_user_from ON emails(user_id, from_address);`,
 		`CREATE INDEX IF NOT EXISTS idx_emails_user_sent ON emails(user_id, is_sent);`,
+		// Lets the never-emailed join look up received mail by sender instead of scanning per sender
+		`CREATE INDEX IF NOT EXISTS idx_emails_user_sent_from ON emails(user_id, is_sent, from_address);`,
 		`CREATE INDEX IF NOT EXISTS idx_emails_user_date ON emails(user_id, date DESC);`,
 
 		`CREATE TABLE IF NOT EXISTS contact_stats (
@@ -586,12 +607,12 @@ func (s *Storage) SaveEmailsBatch(userID string, emails []EmailMetadata) error {
 	return tx.Commit()
 }
 
-// GetContactStats returns contact statistics with filtering, searching, sorting, and pagination
+// GetContactStats returns senders the user has never emailed, with searching, sorting, and pagination.
+// Contacts the user has sent mail to are always excluded.
 func (s *Storage) GetContactStats(
 	userID string,
-	filter string, // "all", "never_emailed", "emailed"
 	search string,
-	sortField string, // "received_count", "sent_count", "total_size", "last_received", "email"
+	sortField string, // "received_count", "total_size", "last_received", "email"
 	sortOrder string, // "asc", "desc"
 	limit int,
 	offset int,
@@ -599,17 +620,8 @@ func (s *Storage) GetContactStats(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	whereClauses := []string{"user_id = ?"}
+	whereClauses := []string{"user_id = ?", "received_count > 0", "sent_count = 0"}
 	args := []interface{}{userID}
-
-	switch filter {
-	case "never_emailed":
-		whereClauses = append(whereClauses, "received_count > 0", "sent_count = 0")
-	case "emailed":
-		whereClauses = append(whereClauses, "sent_count > 0")
-	default: // "all"
-		whereClauses = append(whereClauses, "(received_count > 0 OR sent_count > 0)")
-	}
 
 	if search != "" {
 		whereClauses = append(whereClauses, "(email LIKE ? OR name LIKE ?)")
@@ -629,7 +641,6 @@ func (s *Storage) GetContactStats(
 	// Allowed sort fields
 	validSorts := map[string]string{
 		"received_count": "received_count",
-		"sent_count":     "sent_count",
 		"total_size":     "total_size",
 		"last_received":  "last_received",
 		"email":          "email",
@@ -652,8 +663,7 @@ func (s *Storage) GetContactStats(
 	}
 
 	query := fmt.Sprintf(`
-		SELECT email, name, received_count, sent_count, total_size,
-		       first_received, last_received, first_sent, last_sent
+		SELECT email, name, received_count, total_size, first_received, last_received
 		FROM contact_stats
 		WHERE %s
 		ORDER BY %s %s
@@ -673,20 +683,15 @@ func (s *Storage) GetContactStats(
 			cs               ContactStat
 			firstReceivedRaw interface{}
 			lastReceivedRaw  interface{}
-			firstSentRaw     interface{}
-			lastSentRaw      interface{}
 		)
 
 		err := rows.Scan(
 			&cs.Email,
 			&cs.Name,
 			&cs.ReceivedCount,
-			&cs.SentCount,
 			&cs.TotalSize,
 			&firstReceivedRaw,
 			&lastReceivedRaw,
-			&firstSentRaw,
-			&lastSentRaw,
 		)
 		if err != nil {
 			return nil, 0, err
@@ -699,14 +704,7 @@ func (s *Storage) GetContactStats(
 		if cs.LastReceived, parseErr = parseDBTime(lastReceivedRaw, "last_received", cs.Email); parseErr != nil {
 			return nil, 0, parseErr
 		}
-		if cs.FirstSent, parseErr = parseDBTime(firstSentRaw, "first_sent", cs.Email); parseErr != nil {
-			return nil, 0, parseErr
-		}
-		if cs.LastSent, parseErr = parseDBTime(lastSentRaw, "last_sent", cs.Email); parseErr != nil {
-			return nil, 0, parseErr
-		}
 
-		cs.NeverEmailed = cs.ReceivedCount > 0 && cs.SentCount == 0
 		results = append(results, cs)
 	}
 
@@ -734,17 +732,41 @@ func (s *Storage) GetOverallStats(userID string) (*OverallStats, error) {
 		return nil, err
 	}
 
-	// Count contacts
+	// Count all senders and the subset the user has never emailed
 	row = s.db.QueryRow(`
 		SELECT
 			COUNT(*) as unique_senders,
-			COALESCE(SUM(CASE WHEN received_count > 0 AND sent_count = 0 THEN 1 ELSE 0 END), 0) as never_emailed
+			COALESCE(SUM(CASE WHEN sent_count = 0 THEN 1 ELSE 0 END), 0) as never_emailed
 		FROM contact_stats
 		WHERE user_id = ? AND received_count > 0
 	`, userID)
-	if err := row.Scan(&stats.UniqueSenders, &stats.NeverEmailedCount); err != nil {
+	if err := row.Scan(&stats.UniqueSenders, &stats.NeverEmailedSenders); err != nil {
 		return nil, err
 	}
+
+	// Count received mail from senders the user has never emailed
+	row = s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(e.size_estimate), 0)
+		FROM emails e
+		`+neverEmailedJoinSQL+`
+		WHERE e.user_id = ? AND `+neverEmailedSQL, userID)
+	if err := row.Scan(&stats.NeverEmailedEmails, &stats.NeverEmailedSizeBytes); err != nil {
+		return nil, err
+	}
+
+	// Count candidate emails for deletion: sender never emailed, email older than 1 month
+	cutoffDate := time.Now().AddDate(0, -1, 0).Format("2006-01-02")
+	candidateRow := s.db.QueryRow(`
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(e.size_estimate), 0),
+			COUNT(DISTINCT e.from_address)
+		FROM emails e
+		`+neverEmailedJoinSQL+`
+		WHERE e.user_id = ? AND `+neverEmailedSQL+`
+		  AND substr(e.date, 1, 10) <= ?
+	`, userID, cutoffDate)
+	_ = candidateRow.Scan(&stats.CandidateEmailsCount, &stats.CandidateSizeBytes, &stats.CandidateSendersCount)
 
 	// Measure local sqlite database size (main db, -wal, -shm)
 	if s.dbPath != "" {
@@ -760,12 +782,14 @@ func (s *Storage) GetOverallStats(userID string) (*OverallStats, error) {
 	return &stats, nil
 }
 
-// GetEmails retrieves emails for a user with optional sender filter, search, filter mode ("never_emailed"), and pagination
+// GetEmails retrieves received emails from senders the user has never emailed, with optional
+// sender filter, search, candidate age filter ("candidates", "candidates_3m", "_6m", "_1y"), and pagination.
+// Sent mail and mail from anyone the user has emailed are always excluded.
 func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, offset int) ([]EmailMetadata, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	whereClauses := []string{"e.user_id = ?"}
+	whereClauses := []string{"e.user_id = ?", neverEmailedSQL}
 	args := []interface{}{userID}
 
 	if senderFilter != "" {
@@ -779,8 +803,18 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 		args = append(args, term, term, term)
 	}
 
-	if filter == "never_emailed" {
-		whereClauses = append(whereClauses, "e.is_sent = 0", "COALESCE(cs.sent_count, 0) = 0", "COALESCE(cs.received_count, 0) > 0")
+	if strings.HasPrefix(filter, "candidates") {
+		months := 1
+		if strings.HasSuffix(filter, "_3m") {
+			months = 3
+		} else if strings.HasSuffix(filter, "_6m") {
+			months = 6
+		} else if strings.HasSuffix(filter, "_1y") {
+			months = 12
+		}
+		cutoffDate := time.Now().AddDate(0, -months, 0).Format("2006-01-02")
+		whereClauses = append(whereClauses, "substr(e.date, 1, 10) <= ?")
+		args = append(args, cutoffDate)
 	}
 
 	whereSQL := strings.Join(whereClauses, " AND ")
@@ -789,9 +823,9 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM emails e
-		LEFT JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address
+		%s
 		WHERE %s
-	`, whereSQL)
+	`, neverEmailedJoinSQL, whereSQL)
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -805,15 +839,13 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 
 	query := fmt.Sprintf(`
 		SELECT e.id, e.thread_id, e.from_address, e.from_name, e.to_addresses,
-		       e.subject, e.snippet, e.date, e.size_estimate, e.label_ids, e.is_sent,
-		       COALESCE(cs.sent_count, 0) as cs_sent,
-		       COALESCE(cs.received_count, 0) as cs_recv
+		       e.subject, e.snippet, e.date, e.size_estimate, e.label_ids, cs.received_count
 		FROM emails e
-		LEFT JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address
+		%s
 		WHERE %s
 		ORDER BY e.date DESC
 		LIMIT ? OFFSET ?
-	`, whereSQL)
+	`, neverEmailedJoinSQL, whereSQL)
 
 	queryArgs := append(args, limit, offset)
 	rows, err := s.db.Query(query, queryArgs...)
@@ -828,13 +860,10 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 			em              EmailMetadata
 			toAddressesJSON string
 			labelIDsJSON    string
-			isSentInt       int
 			fromName        sql.NullString
 			subject         sql.NullString
 			snippet         sql.NullString
 			dateRaw         interface{}
-			csSent          int
-			csRecv          int
 		)
 
 		err := rows.Scan(
@@ -848,9 +877,7 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 			&dateRaw,
 			&em.SizeEstimate,
 			&labelIDsJSON,
-			&isSentInt,
-			&csSent,
-			&csRecv,
+			&em.SenderEmailCount,
 		)
 		if err != nil {
 			return nil, 0, err
@@ -867,9 +894,6 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 		em.FromName = fromName.String
 		em.Subject = subject.String
 		em.Snippet = snippet.String
-		em.IsSent = isSentInt == 1
-		em.SenderNeverEmailed = !em.IsSent && csRecv > 0 && csSent == 0
-		em.SenderEmailCount = csRecv
 
 		_ = json.Unmarshal([]byte(toAddressesJSON), &em.To)
 		_ = json.Unmarshal([]byte(labelIDsJSON), &em.LabelIDs)
@@ -880,7 +904,8 @@ func (s *Storage) GetEmails(userID, senderFilter, search, filter string, limit, 
 	return emails, total, nil
 }
 
-// GetEmailByID retrieves a single email
+// GetEmailByID retrieves a single received email from a sender the user has never emailed.
+// Returns nil for sent mail and mail from anyone the user has emailed.
 func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -889,23 +914,18 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 		em              EmailMetadata
 		toAddressesJSON string
 		labelIDsJSON    string
-		isSentInt       int
 		fromName        sql.NullString
 		subject         sql.NullString
 		snippet         sql.NullString
 		dateRaw         interface{}
-		csSent          int
-		csRecv          int
 	)
 	err := s.db.QueryRow(`
 		SELECT e.id, e.thread_id, e.from_address, e.from_name, e.to_addresses,
-		       e.subject, e.snippet, e.date, e.size_estimate, e.label_ids, e.is_sent,
-		       COALESCE(cs.sent_count, 0) as cs_sent,
-		       COALESCE(cs.received_count, 0) as cs_recv
+		       e.subject, e.snippet, e.date, e.size_estimate, e.label_ids, cs.received_count
 		FROM emails e
-		LEFT JOIN contact_stats cs ON cs.user_id = e.user_id AND cs.email = e.from_address
-		WHERE e.user_id = ? AND e.id = ?
-	`, userID, emailID).Scan(
+		`+neverEmailedJoinSQL+`
+		WHERE e.user_id = ? AND e.id = ? AND `+neverEmailedSQL,
+		userID, emailID).Scan(
 		&em.ID,
 		&em.ThreadID,
 		&em.From,
@@ -916,9 +936,7 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 		&dateRaw,
 		&em.SizeEstimate,
 		&labelIDsJSON,
-		&isSentInt,
-		&csSent,
-		&csRecv,
+		&em.SenderEmailCount,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -938,11 +956,60 @@ func (s *Storage) GetEmailByID(userID, emailID string) (*EmailMetadata, error) {
 	em.FromName = fromName.String
 	em.Subject = subject.String
 	em.Snippet = snippet.String
-	em.IsSent = isSentInt == 1
-	em.SenderNeverEmailed = !em.IsSent && csRecv > 0 && csSent == 0
-	em.SenderEmailCount = csRecv
 	_ = json.Unmarshal([]byte(toAddressesJSON), &em.To)
 	_ = json.Unmarshal([]byte(labelIDsJSON), &em.LabelIDs)
 
 	return &em, nil
+}
+
+// GetCandidateSenders returns distinct senders who have never been emailed back and have candidate emails (>1 month old)
+func (s *Storage) GetCandidateSenders(userID string) ([]CandidateSender, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoffDate := time.Now().AddDate(0, -1, 0).Format("2006-01-02")
+	query := `
+		SELECT
+			cs.email,
+			cs.name,
+			COUNT(e.id) as candidate_count,
+			COALESCE(SUM(e.size_estimate), 0) as candidate_size,
+			MIN(e.date) as oldest_candidate,
+			MAX(e.date) as newest_candidate
+		FROM emails e
+		` + neverEmailedJoinSQL + `
+		WHERE e.user_id = ? AND ` + neverEmailedSQL + `
+		  AND substr(e.date, 1, 10) <= ?
+		GROUP BY cs.email, cs.name
+		ORDER BY candidate_size DESC
+	`
+
+	rows, err := s.db.Query(query, userID, cutoffDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var senders []CandidateSender
+	for rows.Next() {
+		var (
+			cs        CandidateSender
+			oldestRaw interface{}
+			newestRaw interface{}
+		)
+		if err := rows.Scan(&cs.Email, &cs.Name, &cs.CandidateCount, &cs.CandidateSize, &oldestRaw, &newestRaw); err != nil {
+			return nil, err
+		}
+		if oldestDate, err := parseDBTime(oldestRaw, "oldest_candidate", cs.Email); err == nil && oldestDate != nil {
+			cs.OldestDate = oldestDate
+		}
+		if newestDate, err := parseDBTime(newestRaw, "newest_candidate", cs.Email); err == nil && newestDate != nil {
+			cs.NewestDate = newestDate
+		}
+		senders = append(senders, cs)
+	}
+	if senders == nil {
+		senders = []CandidateSender{}
+	}
+	return senders, nil
 }

@@ -16,8 +16,10 @@ export function useScan(authHeaders: () => Record<string, string>) {
     totalReceived: 0,
     totalSent: 0,
     uniqueSenders: 0,
-    neverEmailedCount: 0,
     totalSizeBytes: 0,
+    neverEmailedSenders: 0,
+    neverEmailedEmails: 0,
+    neverEmailedSizeBytes: 0,
     localDbSizeBytes: 0,
   })
 

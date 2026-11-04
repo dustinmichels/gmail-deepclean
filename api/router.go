@@ -28,6 +28,7 @@ func NewRouter(staticDir string) http.Handler {
 	mux.HandleFunc("GET /api/inbox/stats", RequireAuth(HandleGetEmailStats))
 	mux.HandleFunc("GET /api/inbox/contacts", RequireAuth(HandleGetContacts))
 	mux.HandleFunc("GET /api/inbox/top-senders", RequireAuth(HandleGetTopSenders))
+	mux.HandleFunc("GET /api/inbox/candidate-senders", RequireAuth(HandleGetCandidateSenders))
 
 	// Serve static frontend with SPA fallback
 	if staticDir != "" {

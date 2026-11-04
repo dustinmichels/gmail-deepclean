@@ -8,31 +8,23 @@ describe('ContactStatsChart', () => {
       email: 'alice@example.com',
       name: 'Alice Cooper',
       receivedCount: 42,
-      sentCount: 15,
       totalSize: 500000,
-      neverEmailed: false,
     },
     {
       email: 'bob@example.com',
       name: 'Bob Marley',
       receivedCount: 88,
-      sentCount: 0,
       totalSize: 1200000,
-      neverEmailed: true,
     },
   ]
 
-  it('renders chart title and legend when contacts are provided', () => {
+  it('renders chart title and bars when contacts are provided', () => {
     const wrapper = mount(ContactStatsChart, {
       props: { contacts: sampleContacts, loading: false },
     })
 
-    expect(wrapper.text()).toContain('Emails Received vs. Sent by Contact')
-    expect(wrapper.text()).toContain('They Sent Me (Received)')
-    expect(wrapper.text()).toContain('I Sent Them')
+    expect(wrapper.text()).toContain('Top Senders by Emails Received')
     expect(wrapper.find('.chart-container').exists()).toBe(true)
-    expect(wrapper.find('.swatch-received').exists()).toBe(true)
-    expect(wrapper.find('.swatch-sent').exists()).toBe(true)
     // Verify TanStack Chart SVG is rendered inside the container
     const svg = wrapper.find('svg.ts-chart')
     expect(svg.exists()).toBe(true)
@@ -46,17 +38,13 @@ describe('ContactStatsChart', () => {
         email: 'davemichels@gmail.com',
         name: 'Dave Michels',
         receivedCount: 50,
-        sentCount: 20,
         totalSize: 1000,
-        neverEmailed: false,
       },
       {
         email: 'dave@michels.com',
         name: 'Dave Michels',
         receivedCount: 30,
-        sentCount: 10,
         totalSize: 1000,
-        neverEmailed: false,
       },
     ]
 
@@ -83,6 +71,6 @@ describe('ContactStatsChart', () => {
       props: { contacts: [], loading: false },
     })
 
-    expect(wrapper.text()).toContain('No contact data available to plot.')
+    expect(wrapper.text()).toContain('No sender data available to plot.')
   })
 })

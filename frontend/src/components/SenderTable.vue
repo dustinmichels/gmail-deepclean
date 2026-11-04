@@ -1,31 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import {
-  AlertTriangle,
-  ArrowLeftRight,
-  ArrowUpDown,
-  Check,
-  Copy,
-  Download,
-  Mail,
-  Search,
-  Users,
-  UserX,
-} from 'lucide-vue-next'
+import { ArrowUpDown, Check, Copy, Download, Mail, Search, UserX } from 'lucide-vue-next'
 import type { ContactStat } from '../types'
 import ContactStatsChart from './ContactStatsChart.vue'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     contacts: ContactStat[]
     total: number
     loading: boolean
     error?: string | null
-    activeFilter: string
     searchQuery: string
     sortField: string
-    sortOrder: string
-    neverEmailedCount: number
   }>(),
   {
     error: null,
@@ -33,7 +19,6 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'update:filter', filter: string): void
   (e: 'update:search', search: string): void
   (e: 'update:sort', sort: string): void
   (e: 'select-sender', email: string): void
@@ -75,9 +60,9 @@ const formatDate = (dateStr?: string) => {
   <div class="sender-section">
     <div class="section-header">
       <div class="header-left">
-        <Users :size="20" class="header-icon" />
-        <h2>Sender Analysis</h2>
-        <span class="total-badge">{{ total }} contacts</span>
+        <UserX :size="20" class="header-icon" />
+        <h2>Senders You've Never Emailed</h2>
+        <span class="total-badge">{{ total }} senders</span>
       </div>
 
       <div class="header-actions">
@@ -93,99 +78,56 @@ const formatDate = (dateStr?: string) => {
       </div>
     </div>
 
-    <!-- Filter Tabs & Search Controls -->
+    <p class="section-desc">
+      Anyone you have sent an email to is treated as a real contact and hidden here.
+    </p>
+
+    <!-- Search & Sort Controls -->
     <div class="controls-bar">
-      <div class="tabs">
-        <button
-          class="tab-btn"
-          :class="{ active: activeFilter === 'all' }"
-          @click="emit('update:filter', 'all')"
-        >
-          <Users :size="14" />
-          <span>All Senders</span>
-        </button>
-
-        <button
-          class="tab-btn never-emailed-tab"
-          :class="{ active: activeFilter === 'never_emailed' }"
-          @click="emit('update:filter', 'never_emailed')"
-        >
-          <AlertTriangle :size="14" />
-          <span>Never Emailed Back</span>
-          <span class="pill" v-if="neverEmailedCount > 0">{{ neverEmailedCount }}</span>
-        </button>
-
-        <button
-          class="tab-btn"
-          :class="{ active: activeFilter === 'emailed' }"
-          @click="emit('update:filter', 'emailed')"
-        >
-          <ArrowLeftRight :size="14" />
-          <span>Reciprocal Contacts</span>
-        </button>
+      <div class="search-box">
+        <Search :size="15" class="search-icon" />
+        <input
+          type="text"
+          placeholder="Search email or name..."
+          :value="searchQuery"
+          @input="emit('update:search', ($event.target as HTMLInputElement).value)"
+          class="input-search"
+        />
       </div>
 
-      <div class="filter-inputs">
-        <div class="search-box">
-          <Search :size="15" class="search-icon" />
-          <input
-            type="text"
-            placeholder="Search email or name..."
-            :value="searchQuery"
-            @input="emit('update:search', ($event.target as HTMLInputElement).value)"
-            class="input-search"
-          />
-        </div>
-
-        <div class="sort-box">
-          <ArrowUpDown :size="14" class="sort-icon" />
-          <label>Sort:</label>
-          <select
-            :value="sortField"
-            @change="emit('update:sort', ($event.target as HTMLSelectElement).value)"
-            class="select-sort"
-          >
-            <option value="received_count">Most Received</option>
-            <option value="sent_count">Most Sent</option>
-            <option value="total_size">Largest Mailbox Space</option>
-            <option value="last_received">Most Recent</option>
-            <option value="email">Email Address</option>
-          </select>
-        </div>
+      <div class="sort-box">
+        <ArrowUpDown :size="14" class="sort-icon" />
+        <label>Sort:</label>
+        <select
+          :value="sortField"
+          @change="emit('update:sort', ($event.target as HTMLSelectElement).value)"
+          class="select-sort"
+        >
+          <option value="received_count">Most Received</option>
+          <option value="total_size">Largest Mailbox Space</option>
+          <option value="last_received">Most Recent</option>
+          <option value="email">Email Address</option>
+        </select>
       </div>
     </div>
 
-    <!-- Explanatory Banner for Never-Emailed Tab -->
-    <div v-if="activeFilter === 'never_emailed'" class="never-emailed-callout">
-      <div class="callout-icon">
-        <AlertTriangle :size="18" />
-      </div>
-      <div class="callout-body">
-        <strong>One-Way Senders Spotlight:</strong>
-        These {{ neverEmailedCount }} senders have sent you messages, but you have never sent an
-        email back to them. Click <em>Emails</em> to inspect their messages below.
-      </div>
-    </div>
-
-    <!-- TanStack Chart: Emails Received vs Sent -->
     <ContactStatsChart :contacts="contacts" :loading="loading" />
 
     <!-- Contacts Table -->
     <div class="table-container">
-      <div v-if="loading" class="loading-state">Loading contacts...</div>
+      <div v-if="loading" class="loading-state">Loading senders...</div>
       <div v-else-if="error" class="error-state">
         <p class="error-message">{{ error }}</p>
         <button @click="emit('retry')" class="btn-retry">Retry</button>
       </div>
       <div v-else-if="contacts.length === 0" class="empty-state">
-        <p>No contacts found matching the selected filter.</p>
+        <p>No senders found.</p>
       </div>
       <table v-else class="sender-table">
         <thead>
           <tr>
-            <th>Contact / Sender</th>
+            <th>Sender</th>
             <th>Received</th>
-            <th>Sent Back</th>
             <th title="Total space occupied in your Gmail mailbox by messages from this sender">
               Mailbox Size
             </th>
@@ -194,7 +136,7 @@ const formatDate = (dateStr?: string) => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="c in contacts" :key="c.email" :class="{ 'row-warning': c.neverEmailed }">
+          <tr v-for="c in contacts" :key="c.email">
             <td class="col-contact">
               <div class="contact-name" v-if="c.name">{{ c.name }}</div>
               <div class="contact-email">{{ c.email }}</div>
@@ -202,18 +144,6 @@ const formatDate = (dateStr?: string) => {
 
             <td class="col-count">
               <span class="badge received-badge">{{ c.receivedCount }}</span>
-            </td>
-
-            <td class="col-count">
-              <span v-if="c.sentCount > 0" class="badge sent-badge">{{ c.sentCount }}</span>
-              <span
-                v-else
-                class="badge warning-badge"
-                title="You have never sent an email to this address"
-              >
-                <UserX :size="12" />
-                Never
-              </span>
             </td>
 
             <td class="col-size">{{ formatBytes(c.totalSize) }}</td>
@@ -348,66 +278,13 @@ const formatDate = (dateStr?: string) => {
   cursor: not-allowed;
 }
 
-.controls-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-@media (min-width: 768px) {
-  .controls-bar {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-  }
-}
-
-.tabs {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.tab-btn {
-  background: #f1f5f9;
-  border: 1px solid transparent;
-  color: #475569;
-  padding: 0.45rem 0.85rem;
-  border-radius: var(--radius-sm, 6px);
+.section-desc {
+  margin: -0.5rem 0 0;
   font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  transition: all 0.15s ease;
+  color: var(--color-text-muted, #64748b);
 }
 
-.tab-btn:hover {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.tab-btn.active {
-  background: #2563eb;
-  color: #ffffff;
-}
-
-.never-emailed-tab.active {
-  background: #ea580c;
-  color: #ffffff;
-}
-
-.never-emailed-tab .pill {
-  background: #c2410c;
-  color: #ffffff;
-  font-size: 0.75rem;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-weight: 700;
-}
-
-.filter-inputs {
+.controls-bar {
   display: flex;
   gap: 0.75rem;
   align-items: center;
@@ -462,28 +339,6 @@ const formatDate = (dateStr?: string) => {
   color: #0f172a;
 }
 
-/* Callout banner */
-.never-emailed-callout {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  border-radius: var(--radius-sm, 6px);
-  padding: 0.75rem 1rem;
-  font-size: 0.85rem;
-  color: #9a3412;
-}
-
-.callout-icon {
-  font-size: 1.25rem;
-  flex-shrink: 0;
-}
-
-.callout-body strong {
-  color: #7c2d12;
-}
-
 /* Table styling */
 .table-container {
   overflow-x: auto;
@@ -519,15 +374,6 @@ const formatDate = (dateStr?: string) => {
   background: #f8fafc;
 }
 
-/* Row warning highlight */
-.row-warning {
-  background-color: #fffdf7;
-}
-
-.row-warning:hover {
-  background-color: #fffbeb !important;
-}
-
 .col-contact {
   max-width: 260px;
 }
@@ -557,20 +403,6 @@ const formatDate = (dateStr?: string) => {
 .received-badge {
   background: #eff6ff;
   color: #1d4ed8;
-}
-
-.sent-badge {
-  background: #f0fdf4;
-  color: #15803d;
-}
-
-.warning-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  background: #fef3c7;
-  color: #b45309;
-  border: 1px solid #fde68a;
 }
 
 .col-size {

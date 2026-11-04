@@ -20,15 +20,15 @@ describe('EmailList', () => {
     {
       id: 'email-456',
       threadId: 'th-456',
-      from: 'me@gmail.com',
-      fromName: 'Me',
-      to: ['client@corp.com'],
+      from: 'billing@vendor.com',
+      fromName: 'Vendor Billing',
+      to: ['me@gmail.com'],
       subject: 'Invoice #1042',
       snippet: 'Attached is the invoice for services rendered.',
       date: '2026-09-27T09:15:00Z',
-      labelIds: ['SENT'],
+      labelIds: ['INBOX'],
       sizeEstimate: 45000,
-      isSent: true,
+      isSent: false,
     },
   ]
 
@@ -40,14 +40,12 @@ describe('EmailList', () => {
     searchQuery: '',
   }
 
-  it('renders email list with subjects, snippets, senders, and direction badges', () => {
+  it('renders email list with subjects, snippets, and senders', () => {
     const wrapper = mount(EmailList, { props: defaultProps })
 
     expect(wrapper.text()).toContain('Quarterly Review Meeting')
     expect(wrapper.text()).toContain('Jane Doe')
     expect(wrapper.text()).toContain('Invoice #1042')
-    expect(wrapper.find('.direction-badge.received').text()).toContain('Received')
-    expect(wrapper.find('.direction-badge.sent').text()).toContain('Sent')
   })
 
   it('toggles expanded details when an email card is clicked', async () => {
@@ -86,7 +84,7 @@ describe('EmailList', () => {
     expect(wrapper.emitted('update:search')![0]).toEqual(['Meeting'])
   })
 
-  it('highlights senders whom user never emailed and displays their count', () => {
+  it('displays how many emails were received from the sender', () => {
     const wrapper = mount(EmailList, {
       props: {
         ...defaultProps,
@@ -103,7 +101,6 @@ describe('EmailList', () => {
             labelIds: ['INBOX'],
             sizeEstimate: 5000,
             isSent: false,
-            senderNeverEmailed: true,
             senderEmailCount: 24,
           },
         ],
@@ -111,20 +108,9 @@ describe('EmailList', () => {
       },
     })
 
-    expect(wrapper.find('.never-emailed-card').exists()).toBe(true)
-    expect(wrapper.find('.never-emailed-badge').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Never Emailed Back')
-    expect(wrapper.text()).toContain('24 received')
+    expect(wrapper.find('.sender-count-badge').text()).toContain('24 received')
   })
 
-  it('emits update:filter-mode when filter tabs are clicked', async () => {
-    const wrapper = mount(EmailList, { props: defaultProps })
-    const alertChip = wrapper.find('.alert-chip')
-    await alertChip.trigger('click')
-
-    expect(wrapper.emitted('update:filter-mode')).toBeTruthy()
-    expect(wrapper.emitted('update:filter-mode')![0]).toEqual(['never_emailed'])
-  })
   it('renders error state and emits retry when error prop is set', async () => {
     const wrapper = mount(EmailList, {
       props: {

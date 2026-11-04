@@ -5,7 +5,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   // Contacts State
   const contacts = ref<ContactStat[]>([])
   const totalContacts = ref(0)
-  const contactsFilter = ref<string>('all')
   const contactsSearch = ref<string>('')
   const contactsSort = ref<string>('received_count')
   const contactsLoading = ref(false)
@@ -14,7 +13,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const emails = ref<EmailMetadata[]>([])
   const totalEmails = ref(0)
   const selectedSender = ref<string | null>(null)
-  const emailsFilter = ref<'all' | 'never_emailed'>('all')
   const emailsSearch = ref<string>('')
   const emailsLoading = ref(false)
   const emailsError = ref<string | null>(null)
@@ -29,7 +27,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     contactsError.value = null
     try {
       const params = new URLSearchParams({
-        filter: contactsFilter.value,
         search: contactsSearch.value,
         sort: contactsSort.value,
         order: 'desc',
@@ -74,9 +71,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
       if (selectedSender.value) {
         params.set('sender', selectedSender.value)
       }
-      if (emailsFilter.value && emailsFilter.value !== 'all') {
-        params.set('filter', emailsFilter.value)
-      }
       if (emailsSearch.value) {
         params.set('search', emailsSearch.value)
       }
@@ -111,7 +105,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const filterBySender = (senderEmail: string) => {
     selectedSender.value = senderEmail
     emailsSearch.value = ''
-    emailsFilter.value = 'all'
     fetchEmails(false)
   }
 
@@ -123,22 +116,12 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   const exportContactsCSV = () => {
     if (contacts.value.length === 0) return
 
-    const headers = [
-      'Email',
-      'Name',
-      'Received Count',
-      'Sent Count',
-      'Total Size (Bytes)',
-      'Never Emailed Back',
-      'Last Received',
-    ]
+    const headers = ['Email', 'Name', 'Received Count', 'Total Size (Bytes)', 'Last Received']
     const rows = contacts.value.map((c) => [
       `"${c.email.replace(/"/g, '""')}"`,
       `"${(c.name || '').replace(/"/g, '""')}"`,
       c.receivedCount,
-      c.sentCount,
       c.totalSize,
-      c.neverEmailed ? 'YES' : 'NO',
       c.lastReceived || '',
     ])
 
@@ -147,21 +130,17 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.setAttribute('href', url)
-    link.setAttribute('download', `gmail_contacts_${contactsFilter.value}.csv`)
+    link.setAttribute('download', 'gmail_never_emailed_senders.csv')
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
   }
 
-  // Watchers to auto-refresh on filter changes
-  watch([contactsFilter, contactsSort], () => {
+  watch(contactsSort, () => {
     fetchContacts()
   })
 
-  watch(emailsFilter, () => {
-    fetchEmails(false)
-  })
   // Debounced search watcher for contacts
   let contactSearchTimer: number | null = null
   watch(contactsSearch, () => {
@@ -183,7 +162,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
   return {
     contacts,
     totalContacts,
-    contactsFilter,
     contactsSearch,
     contactsSort,
     contactsLoading,
@@ -191,7 +169,6 @@ export function useEmails(authHeaders: () => Record<string, string>) {
     emails,
     totalEmails,
     selectedSender,
-    emailsFilter,
     emailsSearch,
     emailsLoading,
     emailsError,

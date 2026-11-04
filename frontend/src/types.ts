@@ -13,17 +13,14 @@ export interface AuthMeResponse {
   createdAt: string
 }
 
+// A sender the user has never emailed. Contacts the user has emailed are never returned.
 export interface ContactStat {
   email: string
   name: string
   receivedCount: number
-  sentCount: number
   totalSize: number
   firstReceived?: string
   lastReceived?: string
-  firstSent?: string
-  lastSent?: string
-  neverEmailed: boolean
 }
 
 export interface ContactsResponse {
@@ -33,14 +30,29 @@ export interface ContactsResponse {
   offset: number
 }
 
+// Totals cover all scanned mail; neverEmailed* cover received mail from senders never emailed.
 export interface OverallStats {
   totalEmailsProcessed: number
   totalReceived: number
   totalSent: number
   uniqueSenders: number
-  neverEmailedCount: number
   totalSizeBytes: number
+  neverEmailedSenders: number
+  neverEmailedEmails: number
+  neverEmailedSizeBytes: number
   localDbSizeBytes?: number
+  candidateEmailsCount?: number
+  candidateSizeBytes?: number
+  candidateSendersCount?: number
+}
+
+export interface CandidateSender {
+  email: string
+  name: string
+  candidateCount: number
+  candidateSize: number
+  oldestDate?: string
+  newestDate?: string
 }
 
 export interface ScanProgress {
@@ -65,7 +77,6 @@ export interface EmailMetadata {
   labelIds: string[]
   sizeEstimate: number
   isSent: boolean
-  senderNeverEmailed?: boolean
   senderEmailCount?: number
 }
 

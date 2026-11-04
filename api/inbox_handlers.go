@@ -88,11 +88,10 @@ func HandleGetInboxStatus(w http.ResponseWriter, r *http.Request, sess *Session)
 	})
 }
 
-// HandleGetContacts returns contact statistics with filtering, searching, and sorting
+// HandleGetContacts returns senders the user has never emailed, with searching and sorting
 func HandleGetContacts(w http.ResponseWriter, r *http.Request, sess *Session) {
 
 	query := r.URL.Query()
-	filter := query.Get("filter") // "all", "never_emailed", "emailed"
 	search := query.Get("search")
 	sortField := query.Get("sort")
 	sortOrder := query.Get("order")
@@ -111,7 +110,7 @@ func HandleGetContacts(w http.ResponseWriter, r *http.Request, sess *Session) {
 		}
 	}
 
-	contacts, total, err := DB.GetContactStats(sess.UserID, filter, search, sortField, sortOrder, limit, offset)
+	contacts, total, err := DB.GetContactStats(sess.UserID, search, sortField, sortOrder, limit, offset)
 	if err != nil {
 		http.Error(w, "Failed to fetch contact statistics: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -126,10 +125,10 @@ func HandleGetContacts(w http.ResponseWriter, r *http.Request, sess *Session) {
 	})
 }
 
-// HandleGetTopSenders returns top senders (convenience endpoint)
+// HandleGetTopSenders returns the top senders the user has never emailed (convenience endpoint)
 func HandleGetTopSenders(w http.ResponseWriter, r *http.Request, sess *Session) {
 
-	contacts, _, err := DB.GetContactStats(sess.UserID, "all", "", "received_count", "desc", 20, 0)
+	contacts, _, err := DB.GetContactStats(sess.UserID, "", "received_count", "desc", 20, 0)
 	if err != nil {
 		http.Error(w, "Failed to fetch top senders: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -150,4 +149,16 @@ func HandleGetEmailStats(w http.ResponseWriter, r *http.Request, sess *Session) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+// HandleGetCandidateSenders returns senders with candidate emails (>1 month old, never emailed back)
+func HandleGetCandidateSenders(w http.ResponseWriter, r *http.Request, sess *Session) {
+	senders, err := DB.GetCandidateSenders(sess.UserID)
+	if err != nil {
+		http.Error(w, "Failed to fetch candidate senders: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(senders)
 }

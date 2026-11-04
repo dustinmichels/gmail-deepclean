@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Chart } from '@tanstack/vue-charts'
-import { barX, defineChart, group } from '@tanstack/charts'
+import { barX, defineChart } from '@tanstack/charts'
 import { tooltip } from '@tanstack/charts/tooltip'
 import { scaleBand, scaleLinear } from 'd3-scale'
 import type { ContactStat } from '../types'
@@ -18,7 +18,6 @@ const props = withDefaults(
 
 interface ChartDatum {
   label: string
-  direction: 'They Sent Me' | 'I Sent Them'
   count: number
 }
 
@@ -46,10 +45,7 @@ const chartData = computed<ChartDatum[]>(() => {
     }
     usedLabels.add(label)
 
-    rows.push(
-      { label, direction: 'They Sent Me', count: c.receivedCount },
-      { label, direction: 'I Sent Them', count: c.sentCount }
-    )
+    rows.push({ label, count: c.receivedCount })
   }
   return rows
 })
@@ -67,9 +63,7 @@ const chartDefinition = computed(() => {
       barX(data, {
         y: 'label',
         x: 'count',
-        z: 'direction',
-        fill: (d: ChartDatum) => (d.direction === 'They Sent Me' ? '#3b82f6' : '#10b981'),
-        layout: group({ padding: 0.1 }),
+        fill: '#3b82f6',
       }),
     ],
   })
@@ -79,28 +73,18 @@ const chartDefinition = computed(() => {
 <template>
   <div class="contacts-chart-card">
     <div class="chart-header">
-      <h3 class="chart-title">Emails Received vs. Sent by Contact</h3>
-      <div class="chart-legend" v-if="chartData.length > 0">
-        <div class="legend-item">
-          <span class="swatch swatch-received"></span>
-          <span>They Sent Me (Received)</span>
-        </div>
-        <div class="legend-item">
-          <span class="swatch swatch-sent"></span>
-          <span>I Sent Them</span>
-        </div>
-      </div>
+      <h3 class="chart-title">Top Senders by Emails Received</h3>
     </div>
 
     <div v-if="loading" class="chart-status-message">Loading chart data...</div>
     <div v-else-if="chartData.length === 0" class="chart-status-message">
-      No contact data available to plot.
+      No sender data available to plot.
     </div>
     <div v-else class="chart-container">
       <Chart
         :definition="chartDefinition"
-        aria-label="Grouped bar chart showing emails received versus emails sent for top contacts"
-        :style="{ height: `${Math.max(220, (chartData.length / 2) * 36)}px` }"
+        aria-label="Bar chart showing emails received from top senders you have never emailed"
+        :style="{ height: `${Math.max(220, chartData.length * 36)}px` }"
       />
     </div>
   </div>
@@ -129,35 +113,6 @@ const chartDefinition = computed(() => {
   font-weight: 700;
   color: var(--color-text-main, #0f172a);
   margin: 0;
-}
-
-.chart-legend {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  font-size: 0.78rem;
-}
-
-.legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--color-text-muted, #64748b);
-  font-weight: 500;
-}
-
-.swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-}
-
-.swatch-received {
-  background: #3b82f6;
-}
-
-.swatch-sent {
-  background: #10b981;
 }
 
 .chart-container {

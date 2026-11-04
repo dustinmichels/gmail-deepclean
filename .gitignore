@@ -1,3 +1,5 @@
+.codegraph/
+
 client_secret_*
 
 .env

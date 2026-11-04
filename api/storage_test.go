@@ -207,38 +207,38 @@ func TestEmailBatchAndContactStats(t *testing.T) {
 	if overall.UniqueSenders != 3 {
 		t.Errorf("Expected 3 unique senders, got %d", overall.UniqueSenders)
 	}
-	// Alice was replied to; newsletter and stranger were NEVER emailed back!
-	if overall.NeverEmailedCount != 2 {
-		t.Errorf("Expected 2 never-emailed senders, got %d", overall.NeverEmailedCount)
+	if overall.TotalSizeBytes != 32800 {
+		t.Errorf("Expected 32800 total bytes across all mail, got %d", overall.TotalSizeBytes)
+	}
+	// Alice and Bob were emailed; newsletter and stranger were NEVER emailed
+	if overall.NeverEmailedSenders != 2 {
+		t.Errorf("Expected 2 never-emailed senders, got %d", overall.NeverEmailedSenders)
+	}
+	if overall.NeverEmailedEmails != 2 {
+		t.Errorf("Expected 2 emails from never-emailed senders, got %d", overall.NeverEmailedEmails)
+	}
+	if overall.NeverEmailedSizeBytes != 19500 {
+		t.Errorf("Expected 19500 bytes from never-emailed senders, got %d", overall.NeverEmailedSizeBytes)
 	}
 	if overall.LocalDbSizeBytes <= 0 {
 		t.Errorf("Expected positive LocalDbSizeBytes, got %d", overall.LocalDbSizeBytes)
 	}
 
-	// Verify "never_emailed" filter
-	neverEmailedList, count, err := storage.GetContactStats(userID, "never_emailed", "", "received_count", "desc", 10, 0)
+	// Contacts list only ever contains never-emailed senders
+	contacts, count, err := storage.GetContactStats(userID, "", "received_count", "desc", 10, 0)
 	if err != nil {
-		t.Fatalf("GetContactStats never_emailed failed: %v", err)
+		t.Fatalf("GetContactStats failed: %v", err)
 	}
-	if count != 2 || len(neverEmailedList) != 2 {
-		t.Fatalf("Expected 2 never_emailed contacts, got count %d, len %d", count, len(neverEmailedList))
+	if count != 2 || len(contacts) != 2 {
+		t.Fatalf("Expected 2 never-emailed contacts, got count %d, len %d", count, len(contacts))
 	}
-	for _, c := range neverEmailedList {
-		if !c.NeverEmailed {
-			t.Errorf("Expected c.NeverEmailed == true for %s", c.Email)
-		}
-		if c.SentCount != 0 {
-			t.Errorf("Expected 0 sent count for %s, got %d", c.Email, c.SentCount)
+	for _, c := range contacts {
+		if c.Email == "alice@friend.org" || c.Email == "bob@work.com" {
+			t.Errorf("Emailed contact %s must not be listed", c.Email)
 		}
 	}
-
-	// Verify "emailed" filter
-	emailedList, countEmailed, err := storage.GetContactStats(userID, "emailed", "", "sent_count", "desc", 10, 0)
-	if err != nil {
-		t.Fatalf("GetContactStats emailed failed: %v", err)
-	}
-	if countEmailed != 2 || len(emailedList) != 2 {
-		t.Fatalf("Expected 2 emailed contacts (alice, bob), got %d", countEmailed)
+	if _, aliceCount, err := storage.GetContactStats(userID, "alice", "received_count", "desc", 10, 0); err != nil || aliceCount != 0 {
+		t.Errorf("Expected search for emailed contact to return 0, got %d (err %v)", aliceCount, err)
 	}
 
 	// Test GetEmails filter by sender
@@ -247,26 +247,27 @@ func TestEmailBatchAndContactStats(t *testing.T) {
 		t.Fatalf("GetEmails failed: %v", err)
 	}
 	if total != 1 || len(senderEmails) != 1 {
-		t.Errorf("Expected 1 email from newsletter, got %d", total)
+		t.Fatalf("Expected 1 email from newsletter, got %d", total)
 	}
 	if senderEmails[0].Subject != "Huge Sales This Weekend!" {
 		t.Errorf("Unexpected subject: %s", senderEmails[0].Subject)
-	}
-	if !senderEmails[0].SenderNeverEmailed {
-		t.Errorf("Expected newsletter to be marked as SenderNeverEmailed")
 	}
 	if senderEmails[0].SenderEmailCount != 1 {
 		t.Errorf("Expected SenderEmailCount to be 1, got %d", senderEmails[0].SenderEmailCount)
 	}
 
-	// Test GetEmails filter="never_emailed"
-	neverEmails, neverTotal, err := storage.GetEmails(userID, "", "", "never_emailed", 10, 0)
+	// GetEmails never returns sent mail or mail from emailed contacts
+	allEmails, allTotal, err := storage.GetEmails(userID, "", "", "", 10, 0)
 	if err != nil {
-		t.Fatalf("GetEmails never_emailed failed: %v", err)
+		t.Fatalf("GetEmails failed: %v", err)
 	}
-	if neverTotal != 2 || len(neverEmails) != 2 {
-		t.Errorf("Expected 2 never_emailed emails, got total=%d len=%d", neverTotal, len(neverEmails))
+	if allTotal != 2 || len(allEmails) != 2 {
+		t.Errorf("Expected 2 emails from never-emailed senders, got total=%d len=%d", allTotal, len(allEmails))
 	}
+	if _, aliceTotal, err := storage.GetEmails(userID, "alice@friend.org", "", "", 10, 0); err != nil || aliceTotal != 0 {
+		t.Errorf("Expected 0 emails from emailed contact, got %d (err %v)", aliceTotal, err)
+	}
+
 	// Test GetEmailByID
 	msg1, err := storage.GetEmailByID(userID, "msg-1")
 	if err != nil {
@@ -274,6 +275,15 @@ func TestEmailBatchAndContactStats(t *testing.T) {
 	}
 	if msg1 == nil || msg1.ID != "msg-1" {
 		t.Errorf("Expected msg-1, got %+v", msg1)
+	}
+	for _, hiddenID := range []string{"msg-3", "msg-4"} {
+		hidden, err := storage.GetEmailByID(userID, hiddenID)
+		if err != nil {
+			t.Fatalf("GetEmailByID %s failed: %v", hiddenID, err)
+		}
+		if hidden != nil {
+			t.Errorf("Expected %s (contact or sent mail) to be hidden, got %+v", hiddenID, hidden)
+		}
 	}
 }
 
@@ -365,7 +375,7 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOverallStats failed: %v", err)
 	}
-	contactsFirst, totalContactsFirst, err := storage.GetContactStats(userID, "all", "", "received_count", "desc", 10, 0)
+	contactsFirst, totalContactsFirst, err := storage.GetContactStats(userID, "", "received_count", "desc", 10, 0)
 	if err != nil {
 		t.Fatalf("GetContactStats failed: %v", err)
 	}
@@ -388,7 +398,7 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second GetOverallStats failed: %v", err)
 	}
-	contactsSecond, totalContactsSecond, err := storage.GetContactStats(userID, "all", "", "received_count", "desc", 10, 0)
+	contactsSecond, totalContactsSecond, err := storage.GetContactStats(userID, "", "received_count", "desc", 10, 0)
 	if err != nil {
 		t.Fatalf("Second GetContactStats failed: %v", err)
 	}
@@ -407,8 +417,11 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 	if overallFirst.TotalSent != overallSecond.TotalSent {
 		t.Errorf("TotalSent inflated: first=%d, second=%d", overallFirst.TotalSent, overallSecond.TotalSent)
 	}
-	if overallFirst.NeverEmailedCount != overallSecond.NeverEmailedCount {
-		t.Errorf("NeverEmailedCount changed: first=%d, second=%d", overallFirst.NeverEmailedCount, overallSecond.NeverEmailedCount)
+	if overallFirst.NeverEmailedSenders != overallSecond.NeverEmailedSenders {
+		t.Errorf("NeverEmailedSenders changed: first=%d, second=%d", overallFirst.NeverEmailedSenders, overallSecond.NeverEmailedSenders)
+	}
+	if overallFirst.NeverEmailedEmails != overallSecond.NeverEmailedEmails {
+		t.Errorf("NeverEmailedEmails inflated: first=%d, second=%d", overallFirst.NeverEmailedEmails, overallSecond.NeverEmailedEmails)
 	}
 	if emailCountFirst != emailCountSecond {
 		t.Errorf("Email count inflated: first=%d, second=%d", emailCountFirst, emailCountSecond)
@@ -430,9 +443,6 @@ func TestSaveEmailsBatchIdempotency(t *testing.T) {
 		if c1.ReceivedCount != c2.ReceivedCount {
 			t.Errorf("Contact %s ReceivedCount inflated: first=%d, second=%d", c1.Email, c1.ReceivedCount, c2.ReceivedCount)
 		}
-		if c1.SentCount != c2.SentCount {
-			t.Errorf("Contact %s SentCount inflated: first=%d, second=%d", c1.Email, c1.SentCount, c2.SentCount)
-		}
 		if c1.TotalSize != c2.TotalSize {
 			t.Errorf("Contact %s TotalSize inflated: first=%d, second=%d", c1.Email, c1.TotalSize, c2.TotalSize)
 		}
@@ -449,20 +459,18 @@ func TestGetContactStatsLegacyTimestamps(t *testing.T) {
 	_, err := storage.db.Exec(`
 		INSERT INTO contact_stats (
 			user_id, email, name, received_count, sent_count, total_size,
-			first_received, last_received, first_sent, last_sent
+			first_received, last_received
 		) VALUES (
-			?, 'legacy@example.com', 'Legacy Contact', 10, 5, 2048,
+			?, 'legacy@example.com', 'Legacy Contact', 10, 0, 2048,
 			'2024-06-19 10:52:18 -0700 -0700',
-			'2026-09-12 11:16:37 -0400 EDT',
-			'2024-05-01 09:30:00 -0700 -0700',
-			'2026-01-15 18:22:10 +0000 UTC'
+			'2026-09-12 11:16:37 -0400 EDT'
 		)
 	`, userID)
 	if err != nil {
 		t.Fatalf("Failed inserting legacy contact stats: %v", err)
 	}
 
-	contacts, total, err := storage.GetContactStats(userID, "all", "", "received_count", "desc", 10, 0)
+	contacts, total, err := storage.GetContactStats(userID, "", "received_count", "desc", 10, 0)
 	if err != nil {
 		t.Fatalf("GetContactStats failed on legacy timestamps: %v", err)
 	}
@@ -480,12 +488,6 @@ func TestGetContactStatsLegacyTimestamps(t *testing.T) {
 	}
 	if c.LastReceived == nil || c.LastReceived.Year() != 2026 || c.LastReceived.Month() != 9 || c.LastReceived.Day() != 12 {
 		t.Errorf("Unexpected LastReceived: %v", c.LastReceived)
-	}
-	if c.FirstSent == nil || c.FirstSent.Year() != 2024 || c.FirstSent.Month() != 5 || c.FirstSent.Day() != 1 {
-		t.Errorf("Unexpected FirstSent: %v", c.FirstSent)
-	}
-	if c.LastSent == nil || c.LastSent.Year() != 2026 || c.LastSent.Month() != 1 || c.LastSent.Day() != 15 {
-		t.Errorf("Unexpected LastSent: %v", c.LastSent)
 	}
 }
 
@@ -505,7 +507,7 @@ func TestGetContactStatsCorruptTimestamp(t *testing.T) {
 		t.Fatalf("Failed inserting corrupt contact stat: %v", err)
 	}
 
-	_, _, err = storage.GetContactStats(userID, "all", "", "received_count", "desc", 10, 0)
+	_, _, err = storage.GetContactStats(userID, "", "received_count", "desc", 10, 0)
 	if err == nil {
 		t.Fatal("Expected error on corrupt timestamp, got nil")
 	}
@@ -533,6 +535,13 @@ func TestGetEmailsLegacyTimestamps(t *testing.T) {
 	`, userID, userID)
 	if err != nil {
 		t.Fatalf("Failed inserting emails with legacy timestamps: %v", err)
+	}
+	_, err = storage.db.Exec(`
+		INSERT INTO contact_stats (user_id, email, name, received_count, sent_count, total_size)
+		VALUES (?, 'notification+pvl16c6f@facebookmail.com', 'Facebook', 2, 0, 6144)
+	`, userID)
+	if err != nil {
+		t.Fatalf("Failed inserting contact stats: %v", err)
 	}
 
 	// 1. Test GetEmails by sender
@@ -562,5 +571,144 @@ func TestGetEmailsLegacyTimestamps(t *testing.T) {
 	expectedDate1 := time.Date(2009, 8, 1, 16, 1, 23, 0, time.FixedZone("", -7*3600))
 	if !em1.Date.Equal(expectedDate1) {
 		t.Errorf("Expected Date %v, got %v", expectedDate1, em1.Date)
+	}
+}
+
+func TestCandidateEmailsAndSenders(t *testing.T) {
+	storage := setupTestDB(t)
+	defer storage.Close()
+
+	userID := "candidate-test-user"
+	now := time.Now()
+
+	emails := []EmailMetadata{
+		// 1. Candidate sender: never replied, older than 1 month (45 days)
+		{
+			ID:           "cand-1",
+			ThreadID:     "th-c1",
+			From:         "old-promo@marketing.com",
+			FromName:     "Promo Blast",
+			To:           []string{"me@test.com"},
+			Subject:      "Summer Discounts",
+			Snippet:      "Save 30% today only...",
+			Date:         now.AddDate(0, 0, -45),
+			SizeEstimate: 1000,
+			IsSent:       false,
+		},
+		// 2. Candidate sender: second email older than 1 month (60 days)
+		{
+			ID:           "cand-2",
+			ThreadID:     "th-c2",
+			From:         "old-promo@marketing.com",
+			FromName:     "Promo Blast",
+			To:           []string{"me@test.com"},
+			Subject:      "Spring Clearance",
+			Snippet:      "Clearance sale starts...",
+			Date:         now.AddDate(0, 0, -60),
+			SizeEstimate: 2000,
+			IsSent:       false,
+		},
+		// 3. Recent sender: never replied, but only 5 days old (< 1 month) -> NOT a candidate
+		{
+			ID:           "recent-1",
+			ThreadID:     "th-r1",
+			From:         "recent-spammer@spam.io",
+			FromName:     "Spam Team",
+			To:           []string{"me@test.com"},
+			Subject:      "Just signed up?",
+			Snippet:      "Welcome to our service...",
+			Date:         now.AddDate(0, 0, -5),
+			SizeEstimate: 1500,
+			IsSent:       false,
+		},
+		// 4. Emailed back sender: received 60 days ago, but user replied 50 days ago -> NOT candidate
+		{
+			ID:           "replied-recv",
+			ThreadID:     "th-rep",
+			From:         "colleague@work.com",
+			FromName:     "Colleague",
+			To:           []string{"me@test.com"},
+			Subject:      "Old Project Question",
+			Snippet:      "Can you send the docs?",
+			Date:         now.AddDate(0, 0, -60),
+			SizeEstimate: 3000,
+			IsSent:       false,
+		},
+		{
+			ID:           "replied-sent",
+			ThreadID:     "th-rep",
+			From:         "me@test.com",
+			FromName:     "Me",
+			To:           []string{"colleague@work.com"},
+			Subject:      "Re: Old Project Question",
+			Snippet:      "Attached docs here.",
+			Date:         now.AddDate(0, 0, -50),
+			SizeEstimate: 4000,
+			IsSent:       true,
+		},
+	}
+
+	if err := storage.SaveEmailsBatch(userID, emails); err != nil {
+		t.Fatalf("SaveEmailsBatch failed: %v", err)
+	}
+
+	// 1. Verify OverallStats candidate metrics
+	stats, err := storage.GetOverallStats(userID)
+	if err != nil {
+		t.Fatalf("GetOverallStats failed: %v", err)
+	}
+	if stats.CandidateEmailsCount != 2 {
+		t.Errorf("Expected 2 candidate emails, got %d", stats.CandidateEmailsCount)
+	}
+	if stats.CandidateSizeBytes != 3000 {
+		t.Errorf("Expected 3000 candidate size bytes, got %d", stats.CandidateSizeBytes)
+	}
+	if stats.CandidateSendersCount != 1 {
+		t.Errorf("Expected 1 candidate sender, got %d", stats.CandidateSendersCount)
+	}
+
+	// 2. Verify GetCandidateSenders
+	senders, err := storage.GetCandidateSenders(userID)
+	if err != nil {
+		t.Fatalf("GetCandidateSenders failed: %v", err)
+	}
+	if len(senders) != 1 {
+		t.Fatalf("Expected 1 candidate sender, got %d", len(senders))
+	}
+	if senders[0].Email != "old-promo@marketing.com" {
+		t.Errorf("Expected old-promo@marketing.com, got %s", senders[0].Email)
+	}
+	if senders[0].CandidateCount != 2 {
+		t.Errorf("Expected 2 candidate count for sender, got %d", senders[0].CandidateCount)
+	}
+	if senders[0].CandidateSize != 3000 {
+		t.Errorf("Expected 3000 candidate size for sender, got %d", senders[0].CandidateSize)
+	}
+
+	// 3. Verify GetEmails with filter="candidates"
+	candEmails, totalCand, err := storage.GetEmails(userID, "", "", "candidates", 10, 0)
+	if err != nil {
+		t.Fatalf("GetEmails candidates failed: %v", err)
+	}
+	if totalCand != 2 || len(candEmails) != 2 {
+		t.Errorf("Expected 2 candidate emails, got total=%d len=%d", totalCand, len(candEmails))
+	}
+
+	// 4. Verify GetEmails with filter="candidates" and sender filter
+	senderEmails, totalSenderCand, err := storage.GetEmails(userID, "old-promo@marketing.com", "", "candidates", 10, 0)
+	if err != nil {
+		t.Fatalf("GetEmails with sender filter failed: %v", err)
+	}
+	if totalSenderCand != 2 || len(senderEmails) != 2 {
+		t.Errorf("Expected 2 emails from old-promo, got total=%d len=%d", totalSenderCand, len(senderEmails))
+	}
+
+	// Non-candidate sender should return 0 with filter="candidates"
+	recentEmails, totalRecentCand, err := storage.GetEmails(userID, "recent-spammer@spam.io", "", "candidates", 10, 0)
+	if err != nil {
+		t.Fatalf("GetEmails for recent sender failed: %v", err)
+	}
+	if totalRecentCand != 0 || len(recentEmails) != 0 {
+		t.Errorf("Expected 0 candidate emails for recent sender, got total=%d len=%d", totalRecentCand, len(recentEmails))
 	}
 }

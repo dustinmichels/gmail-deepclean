@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import {
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   Clock,
   Cloud,
@@ -11,6 +12,7 @@ import {
   Play,
   RotateCw,
   Users,
+  UserX,
 } from 'lucide-vue-next'
 import type { OverallStats, ScanProgress } from '../types'
 
@@ -23,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'start-scan', reset: boolean): void
   (e: 'pause-scan'): void
+  (e: 'go-to-analyze'): void
 }>()
 
 const formatBytes = (bytes: number) => {
@@ -46,6 +49,17 @@ const progressPercent = computed(() => {
   const pct = Math.round((props.progress.totalEmails / props.progress.estimatedTotal) * 100)
   return Math.min(100, Math.max(0, pct))
 })
+
+// Percentage of part/whole with one decimal place; 0 when nothing has been scanned
+const percentOf = (part: number, whole: number) =>
+  whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0
+
+const neverEmailedEmailPct = computed(() =>
+  percentOf(props.stats.neverEmailedEmails, props.stats.totalEmailsProcessed)
+)
+const neverEmailedSizePct = computed(() =>
+  percentOf(props.stats.neverEmailedSizeBytes, props.stats.totalSizeBytes)
+)
 </script>
 
 <template>
@@ -80,7 +94,9 @@ const progressPercent = computed(() => {
           </div>
         </div>
         <div class="stat-value">{{ stats.uniqueSenders.toLocaleString() }}</div>
-        <div class="stat-sub">Distinct contacts analyzed</div>
+        <div class="stat-sub">
+          {{ stats.neverEmailedSenders.toLocaleString() }} you've never emailed
+        </div>
       </div>
 
       <div
@@ -117,6 +133,46 @@ const progressPercent = computed(() => {
             <Database :size="12" class="db-badge-icon" />
             <span>Local DB: Metadata only</span>
           </span>
+        </div>
+      </div>
+
+      <div class="stat-card never-emailed-card">
+        <div class="stat-header-row">
+          <div class="stat-label-group">
+            <UserX :size="16" class="stat-card-icon never-emailed-icon" />
+            <span class="stat-label">Mail From People You Never Emailed</span>
+          </div>
+        </div>
+        <div class="share-grid">
+          <div class="share-item">
+            <div class="share-head">
+              <span class="share-label">Emails</span>
+              <span class="share-pct">{{ neverEmailedEmailPct }}%</span>
+            </div>
+            <div class="share-track">
+              <div class="share-fill" :style="{ width: `${neverEmailedEmailPct}%` }"></div>
+            </div>
+            <div class="stat-sub">
+              {{ stats.neverEmailedEmails.toLocaleString() }} of
+              {{ stats.totalEmailsProcessed.toLocaleString() }} emails
+            </div>
+          </div>
+          <div class="share-item">
+            <div class="share-head">
+              <span class="share-label">Space</span>
+              <span class="share-pct">{{ neverEmailedSizePct }}%</span>
+            </div>
+            <div class="share-track">
+              <div class="share-fill" :style="{ width: `${neverEmailedSizePct}%` }"></div>
+            </div>
+            <div class="stat-sub">
+              {{ formatBytes(stats.neverEmailedSizeBytes) }} of
+              {{ formatBytes(stats.totalSizeBytes) }}
+            </div>
+          </div>
+        </div>
+        <div class="stat-sub">
+          Anyone you have sent an email to counts as a contact and is excluded.
         </div>
       </div>
     </div>
@@ -156,6 +212,16 @@ const progressPercent = computed(() => {
           >
             <RotateCw :size="14" />
             Rescan All
+          </button>
+
+          <button
+            v-if="!isScanning && stats.totalEmailsProcessed > 0"
+            @click="emit('go-to-analyze')"
+            class="btn btn-primary"
+            title="Go to Analyze tab to explore senders and communication breakdown"
+          >
+            View Analysis
+            <ArrowRight :size="14" />
           </button>
         </div>
       </div>
@@ -480,6 +546,62 @@ const progressPercent = computed(() => {
   100% {
     background-position: -200% 0;
   }
+}
+
+.never-emailed-card {
+  grid-column: 1 / -1;
+  gap: 0.75rem;
+}
+
+.stat-card-icon.never-emailed-icon {
+  color: #d97706;
+}
+
+.share-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+}
+
+.share-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.share-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.share-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted, #475569);
+}
+
+.share-pct {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--color-text-main, #0f172a);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.share-track {
+  width: 100%;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.share-fill {
+  height: 100%;
+  background: #f59e0b;
+  border-radius: 999px;
+  transition: width 0.3s ease;
 }
 
 .stat-card-icon.cloud-icon {

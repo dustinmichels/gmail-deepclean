@@ -135,14 +135,14 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 
 		var stats OverallStats
 		_ = json.Unmarshal(rec.Body.Bytes(), &stats)
-		if stats.TotalEmailsProcessed != 1 || stats.NeverEmailedCount != 1 {
-			t.Errorf("Expected 1 email processed and 1 never-emailed sender, got %+v", stats)
+		if stats.TotalEmailsProcessed != 1 || stats.NeverEmailedSenders != 1 || stats.NeverEmailedEmails != 1 {
+			t.Errorf("Expected 1 email processed from 1 never-emailed sender, got %+v", stats)
 		}
 	}
 
 	// 6. Test /api/inbox/contacts
 	{
-		req := httptest.NewRequest("GET", "/api/inbox/contacts?filter=never_emailed", nil)
+		req := httptest.NewRequest("GET", "/api/inbox/contacts", nil)
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -156,6 +156,25 @@ func TestAuthAndHandlerEndpoints(t *testing.T) {
 		contactsList, ok := resp["contacts"].([]interface{})
 		if !ok || len(contactsList) != 1 {
 			t.Errorf("Expected 1 contact, got %v", resp)
+		}
+	}
+
+	// 6b. Test /api/inbox/candidate-senders
+	{
+		req := httptest.NewRequest("GET", "/api/inbox/candidate-senders", nil)
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected 200 OK from /api/inbox/candidate-senders, got %d", rec.Code)
+		}
+
+		var senders []map[string]interface{}
+		_ = json.Unmarshal(rec.Body.Bytes(), &senders)
+		// test-msg-1 is from today, so 0 candidates older than 1 month
+		if len(senders) != 0 {
+			t.Errorf("Expected 0 candidate senders for today's email, got %d", len(senders))
 		}
 	}
 
@@ -253,6 +272,13 @@ func TestGetEmailsWithPlusAddressAndLegacyTimestamp(t *testing.T) {
 	`, msgID, userID, senderAddr)
 	if err != nil {
 		t.Fatalf("Failed inserting test email: %v", err)
+	}
+	_, err = DB.db.Exec(`
+		INSERT INTO contact_stats (user_id, email, name, received_count, sent_count, total_size)
+		VALUES (?, ?, 'Facebook', 1, 0, 4096)
+	`, userID, senderAddr)
+	if err != nil {
+		t.Fatalf("Failed inserting contact stats: %v", err)
 	}
 
 	// 1. Test GET /api/emails?sender=notification%2Bpvl16c6f%40facebookmail.com

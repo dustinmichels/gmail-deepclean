@@ -8,19 +8,15 @@ describe('SenderTable', () => {
       email: 'newsletter@promo.com',
       name: 'Promo Deals',
       receivedCount: 15,
-      sentCount: 0,
       totalSize: 450000,
       lastReceived: '2026-09-28T10:00:00Z',
-      neverEmailed: true,
     },
     {
-      email: 'colleague@work.com',
-      name: 'Bob Colleague',
+      email: 'stranger@coldreach.io',
+      name: 'Alex Sales',
       receivedCount: 8,
-      sentCount: 6,
       totalSize: 120000,
       lastReceived: '2026-09-27T15:00:00Z',
-      neverEmailed: false,
     },
   ]
 
@@ -28,30 +24,24 @@ describe('SenderTable', () => {
     contacts: sampleContacts,
     total: 2,
     loading: false,
-    activeFilter: 'all',
     searchQuery: '',
     sortField: 'received_count',
-    sortOrder: 'desc',
-    neverEmailedCount: 1,
   }
 
-  it('renders contacts table and shows warning badge for never-emailed contact', () => {
+  it('renders the never-emailed senders table', () => {
     const wrapper = mount(SenderTable, { props: defaultProps })
 
     expect(wrapper.text()).toContain('newsletter@promo.com')
     expect(wrapper.text()).toContain('Promo Deals')
-    expect(wrapper.text()).toContain('Never') // Warning badge for 0 sent
-    expect(wrapper.text()).toContain('colleague@work.com')
-    expect(wrapper.find('.row-warning').exists()).toBe(true)
+    expect(wrapper.text()).toContain('stranger@coldreach.io')
+    expect(wrapper.findAll('.sender-table tbody tr')).toHaveLength(2)
   })
 
-  it('emits update:filter when filter tabs are clicked', async () => {
+  it('emits update:sort when the sort option changes', async () => {
     const wrapper = mount(SenderTable, { props: defaultProps })
-    const neverTab = wrapper.find('.never-emailed-tab')
-    await neverTab.trigger('click')
+    await wrapper.find('.select-sort').setValue('total_size')
 
-    expect(wrapper.emitted('update:filter')).toBeTruthy()
-    expect(wrapper.emitted('update:filter')![0]).toEqual(['never_emailed'])
+    expect(wrapper.emitted('update:sort')![0]).toEqual(['total_size'])
   })
 
   it('emits select-sender when Emails button is clicked', async () => {
@@ -81,7 +71,7 @@ describe('SenderTable', () => {
     })
 
     expect(wrapper.text()).toContain('Failed to fetch contacts from server')
-    expect(wrapper.text()).not.toContain('No contacts found matching the selected filter.')
+    expect(wrapper.text()).not.toContain('No senders found.')
     const retryBtn = wrapper.find('.btn-retry')
     expect(retryBtn.exists()).toBe(true)
     await retryBtn.trigger('click')
@@ -97,7 +87,7 @@ describe('SenderTable', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('No contacts found matching the selected filter.')
+    expect(wrapper.text()).toContain('No senders found.')
     expect(wrapper.find('.error-state').exists()).toBe(false)
   })
 })

@@ -17,8 +17,10 @@ describe('ScanDashboard', () => {
       totalReceived: 80,
       totalSent: 40,
       uniqueSenders: 35,
-      neverEmailedCount: 18,
       totalSizeBytes: 2048576,
+      neverEmailedSenders: 18,
+      neverEmailedEmails: 45,
+      neverEmailedSizeBytes: 512144,
     },
     isScanning: false,
   }
@@ -29,8 +31,34 @@ describe('ScanDashboard', () => {
     expect(wrapper.text()).toContain('120')
     expect(wrapper.text()).toContain('35')
     expect(wrapper.text()).toContain('Resume Scan')
-    expect(wrapper.text()).not.toContain('Never Emailed Back')
-    expect(wrapper.find('.highlight-card').exists()).toBe(false)
+  })
+
+  it('shows the share of all mail and space that comes from never-emailed senders', () => {
+    const wrapper = mount(ScanDashboard, { props: defaultProps })
+    const card = wrapper.find('.never-emailed-card')
+
+    const pcts = card.findAll('.share-pct').map((el) => el.text())
+    expect(pcts).toEqual(['37.5%', '25%'])
+    expect(card.text()).toContain('45 of 120 emails')
+    expect(card.findAll('.share-fill')[0].attributes('style')).toContain('width: 37.5%')
+  })
+
+  it('shows 0% shares before anything has been scanned', () => {
+    const wrapper = mount(ScanDashboard, {
+      props: {
+        ...defaultProps,
+        stats: {
+          ...defaultProps.stats,
+          totalEmailsProcessed: 0,
+          totalSizeBytes: 0,
+          neverEmailedEmails: 0,
+          neverEmailedSizeBytes: 0,
+        },
+      },
+    })
+
+    const pcts = wrapper.findAll('.never-emailed-card .share-pct').map((el) => el.text())
+    expect(pcts).toEqual(['0%', '0%'])
   })
 
   it('displays Start Inbox Scan when totalEmailsProcessed is 0', () => {

@@ -3,11 +3,8 @@ import { ref } from 'vue'
 import {
   AlertTriangle,
   ArrowDown,
-  ArrowDownLeft,
-  ArrowUpRight,
   ChevronDown,
   Filter,
-  Inbox,
   Loader2,
   Mail,
   Search,
@@ -16,7 +13,7 @@ import {
 } from 'lucide-vue-next'
 import type { EmailMetadata } from '../types'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     emails: EmailMetadata[]
     total: number
@@ -24,10 +21,8 @@ const props = withDefaults(
     error?: string | null
     selectedSender: string | null
     searchQuery: string
-    filterMode?: 'all' | 'never_emailed'
   }>(),
   {
-    filterMode: 'all',
     error: null,
   }
 )
@@ -35,7 +30,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'clear-sender'): void
   (e: 'update:search', query: string): void
-  (e: 'update:filter-mode', mode: 'all' | 'never_emailed'): void
   (e: 'select-sender', sender: string): void
   (e: 'load-more'): void
   (e: 'retry'): void
@@ -79,31 +73,11 @@ const formatDate = (dateStr: string) => {
           <span class="count-pill">{{ total }} total</span>
         </div>
         <p class="section-desc">
-          Compact inbox preview highlighting incoming messages from people you never emailed back.
+          Received messages from people you have never emailed. Mail from your contacts is hidden.
         </p>
       </div>
 
       <div class="header-controls">
-        <!-- Quick Filter Mode Toggle -->
-        <div class="email-filter-tabs">
-          <button
-            class="tab-chip"
-            :class="{ active: filterMode === 'all' }"
-            @click="emit('update:filter-mode', 'all')"
-          >
-            <Inbox :size="13" />
-            <span>All Emails</span>
-          </button>
-          <button
-            class="tab-chip alert-chip"
-            :class="{ active: filterMode === 'never_emailed' }"
-            @click="emit('update:filter-mode', 'never_emailed')"
-          >
-            <AlertTriangle :size="13" />
-            <span>One-Way Senders Only</span>
-          </button>
-        </div>
-
         <!-- Search Input -->
         <div class="email-search">
           <div class="search-box">
@@ -134,21 +108,6 @@ const formatDate = (dateStr: string) => {
       </button>
     </div>
 
-    <!-- One-Way Senders Filter Active Notice -->
-    <div v-else-if="filterMode === 'never_emailed'" class="filter-chip-bar alert-notice">
-      <div class="filter-chip-text">
-        <AlertTriangle :size="14" />
-        <span
-          >Showing emails exclusively from senders you have
-          <strong>never emailed back</strong>.</span
-        >
-      </div>
-      <button @click="emit('update:filter-mode', 'all')" class="btn-clear-filter">
-        <X :size="13" />
-        <span>Show All</span>
-      </button>
-    </div>
-
     <!-- Email List -->
     <div class="email-list">
       <div v-if="error" class="error-state">
@@ -163,11 +122,9 @@ const formatDate = (dateStr: string) => {
       <div v-else-if="emails.length === 0" class="empty-state">
         <p class="empty-title">No email messages found.</p>
         <p class="empty-hint" v-if="selectedSender">No messages match the current sender filter.</p>
-        <p class="empty-hint" v-else-if="filterMode === 'never_emailed'">
-          No emails from one-way senders found. Either you have replied to everyone or need to run
-          an inbox scan.
+        <p class="empty-hint" v-else>
+          Run an inbox scan to find mail from people you have never emailed.
         </p>
-        <p class="empty-hint" v-else>Run an inbox scan above to fetch and analyze your emails.</p>
       </div>
 
       <!-- Compact Email Card List -->
@@ -176,36 +133,19 @@ const formatDate = (dateStr: string) => {
         v-for="email in emails"
         :key="email.id"
         class="email-card"
-        :class="{
-          expanded: expandedEmails[email.id],
-          'never-emailed-card': email.senderNeverEmailed,
-        }"
+        :class="{ expanded: expandedEmails[email.id] }"
         @click="toggleDetails(email.id)"
       >
         <div class="card-main">
-          <!-- Compact Row 1: Sender info, Never-Emailed badge, Size, Date -->
+          <!-- Compact Row 1: Sender info, sender volume, Size, Date -->
           <div class="card-top">
             <div class="sender-info">
-              <span class="direction-badge" :class="email.isSent ? 'sent' : 'received'">
-                <ArrowUpRight v-if="email.isSent" :size="12" />
-                <ArrowDownLeft v-else :size="12" />
-                <span>{{ email.isSent ? 'Sent' : 'Received' }}</span>
-              </span>
-
-              <!-- Highlight Badge for People You Never Emailed Back -->
               <span
-                v-if="email.senderNeverEmailed"
-                class="never-emailed-badge"
-                title="You have never sent an email to this sender"
+                v-if="email.senderEmailCount && email.senderEmailCount > 0"
+                class="sender-count-badge"
+                title="Total emails received from this sender"
               >
-                <AlertTriangle :size="12" />
-                <span>Never Emailed Back</span>
-                <span
-                  v-if="email.senderEmailCount && email.senderEmailCount > 0"
-                  class="badge-count"
-                >
-                  ({{ email.senderEmailCount }} received)
-                </span>
+                {{ email.senderEmailCount }} received
               </span>
 
               <span class="sender-name">{{ email.fromName || email.from }}</span>
@@ -268,7 +208,7 @@ const formatDate = (dateStr: string) => {
 
             <div class="detail-actions">
               <button
-                v-if="!email.isSent && email.from"
+                v-if="email.from"
                 @click.stop="emit('select-sender', email.from)"
                 class="btn-sender-filter"
               >
@@ -355,45 +295,6 @@ const formatDate = (dateStr: string) => {
   flex-wrap: wrap;
 }
 
-.email-filter-tabs {
-  display: flex;
-  background: #f1f5f9;
-  padding: 3px;
-  border-radius: 8px;
-  gap: 2px;
-}
-
-.tab-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border: none;
-  background: transparent;
-  padding: 0.35rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #475569;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.tab-chip:hover {
-  color: #0f172a;
-}
-
-.tab-chip.active {
-  background: #ffffff;
-  color: #0f172a;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
-.tab-chip.alert-chip.active {
-  background: #fffbeb;
-  color: #b45309;
-  box-shadow: 0 1px 2px rgba(217, 119, 6, 0.12);
-}
-
 .email-search {
   min-width: 240px;
 }
@@ -444,12 +345,6 @@ const formatDate = (dateStr: string) => {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-}
-
-.filter-chip-bar.alert-notice {
-  background: #fffbeb;
-  border-color: #fde68a;
-  color: #92400e;
 }
 
 .btn-clear-filter {
@@ -541,16 +436,6 @@ const formatDate = (dateStr: string) => {
   border-color: #cbd5e1;
 }
 
-/* Prominent Highlight for People You Never Emailed */
-.email-card.never-emailed-card {
-  border-left: 4px solid #f59e0b;
-  background: #fffdfa;
-}
-
-.email-card.never-emailed-card:hover {
-  background: #fffbeb;
-}
-
 .card-main {
   padding: 0.65rem 0.85rem;
   display: flex;
@@ -573,32 +458,9 @@ const formatDate = (dateStr: string) => {
   min-width: 0;
 }
 
-.direction-badge {
+.sender-count-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 0.15rem 0.45rem;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-
-.direction-badge.received {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.direction-badge.sent {
-  background: #f0fdf4;
-  color: #15803d;
-}
-
-/* Never-Emailed Pill */
-.never-emailed-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   background: #fef3c7;
   color: #b45309;
   border: 1px solid #fde68a;
@@ -607,11 +469,6 @@ const formatDate = (dateStr: string) => {
   padding: 0.15rem 0.45rem;
   border-radius: 4px;
   white-space: nowrap;
-}
-
-.badge-count {
-  font-weight: 600;
-  opacity: 0.9;
 }
 
 .sender-name {

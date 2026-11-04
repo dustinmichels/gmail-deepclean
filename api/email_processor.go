@@ -18,19 +18,18 @@ import (
 
 // EmailMetadata stores parsed information about an email message
 type EmailMetadata struct {
-	ID                 string    `json:"id"`
-	ThreadID           string    `json:"threadId"`
-	From               string    `json:"from"`
-	FromName           string    `json:"fromName"`
-	To                 []string  `json:"to"`
-	Subject            string    `json:"subject"`
-	Date               time.Time `json:"date"`
-	Snippet            string    `json:"snippet"`
-	LabelIDs           []string  `json:"labelIds"`
-	SizeEstimate       int64     `json:"sizeEstimate"`
-	IsSent             bool      `json:"isSent"`
-	SenderNeverEmailed bool      `json:"senderNeverEmailed,omitempty"`
-	SenderEmailCount   int       `json:"senderEmailCount,omitempty"`
+	ID               string    `json:"id"`
+	ThreadID         string    `json:"threadId"`
+	From             string    `json:"from"`
+	FromName         string    `json:"fromName"`
+	To               []string  `json:"to"`
+	Subject          string    `json:"subject"`
+	Date             time.Time `json:"date"`
+	Snippet          string    `json:"snippet"`
+	LabelIDs         []string  `json:"labelIds"`
+	SizeEstimate     int64     `json:"sizeEstimate"`
+	IsSent           bool      `json:"isSent"`
+	SenderEmailCount int       `json:"senderEmailCount,omitempty"`
 }
 
 // ProgressInfo represents the current scanning progress

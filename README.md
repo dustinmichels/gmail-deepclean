@@ -6,7 +6,8 @@ A local-first tool for analyzing and cleaning your Gmail inbox using high-perfor
 
 - **Strictly Read-Only Execution**: The app never modifies, deletes, or sends emails. Folders are opened in read-only mode via IMAP `EXAMINE`, and all application logic is strictly analytical.
 - **High-Performance Scanning**: Rapidly indexes inbox metadata via IMAP XOAUTH2 streaming with automatic fallback to the official Gmail REST API.
-- **Inbox Analytics**: Identifies high-volume senders, contacts who send emails you never reply to, and detailed interaction metrics.
+- **Contacts Are Off-Limits**: Anyone you have ever sent an email to is treated as a real contact. Their mail is never shown. The dashboard, sender lists, and email lists only cover mail from people you have never emailed.
+- **Inbox Analytics**: Totals count every scanned email. The dashboard shows what percent of all emails and all mailbox space comes from people you have never emailed, and ranks those senders by volume and size.
 - **Local & Private**: All data and OAuth tokens are stored in a local SQLite database (`data/deepclean.db`). Binds to `127.0.0.1` by default.
 - **Secure Session Management**: Server-side token storage, automated token refresh, and CSRF protection.
 
